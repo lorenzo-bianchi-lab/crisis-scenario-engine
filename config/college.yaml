@@ -1,0 +1,175 @@
+# The resolution college of a cross-border group (SPEC_V2 and SPEC_V3, phase F).
+#
+# The EBA Handbook (EBA/REP/2025/20, par. 43) says a decision-making exercise should be used
+# to train resolution colleges. It does not say who sits in a college, who tells whom, or
+# how late. Everything below is an assumption of this tool, a draft for discussion in the
+# exercise and not a statement of legal duties. No legal basis is cited.
+#
+# Teams: each country has its own competent authority, resolution authority, central bank
+# and deposit guarantee scheme. "home" is the parent's country, "host" the subsidiary's.
+
+# How a team is named in the documents.
+team_name: "{actor} of {country}"
+
+# Days after which a stage change at one entity is passed on to the competent and
+# resolution authorities of the other country (0 = the same day, later in the evening).
+cross_border_delay_days:
+  value: 0
+  unit: days
+  source: ASSUMPTION
+# Extra age of the group's consolidated figures, as the home authorities receive them.
+consolidated_delay_days:
+  value: 1
+  unit: days
+  source: ASSUMPTION
+# Time of day shown on a cross-border notification (a label: the model works in whole days).
+cross_border_clock: "19:15"
+
+# The group run the app opens on and the guided demo follows: about ten days across a
+# weekend. The scenario is taken at the high end of its own severity range
+# (config/scenarios.yaml); no parameter was changed for it. Without a decision of the group
+# the parent is still paying on day 30; with this decision it defaults on its payments.
+showcase:
+  group: showcase
+  scenario: geopolitical
+  severity: high
+  stressed: parent
+  decision: restrict_transfers
+  option: ring_fence
+  day: 6
+
+# Decisions that exist only in a group. `entity`: whose decision it is (parent, subsidiary,
+# or stressed = the entity the scenario hits). `condition`: the stage that must have been
+# reached, at its own entity or at the other one (then as the cross-border delay allows).
+decisions:
+  restrict_transfers:
+    name: Restriction of intragroup transfers
+    actor: competent_authority
+    entity: subsidiary
+    condition:
+      stage: recovery
+      at: other
+    default_option: none
+    question: >-
+      Would you restrict what the subsidiary may lend to the rest of its group? What do you
+      know about the parent, from whom, and how old is it? What does a restriction do to the
+      group, and what does waiting do to the subsidiary's depositors?
+    consult: ["home:competent_authority", "host:resolution_authority", "host:central_bank"]
+    inform: ["home:competent_authority", "home:resolution_authority", "host:resolution_authority"]
+    options:
+      none:
+        name: No restriction
+        effect: none
+      cap:
+        name: Cap further lending to the group
+        effect: restrict
+        params:
+          cap_share:
+            value: 0.005
+            unit: share of the subsidiary's opening total assets, on top of what it has lent
+            source: ASSUMPTION
+      ring_fence:
+        name: Full ring-fence, no further lending
+        effect: restrict
+        params:
+          cap_share:
+            value: 0.0
+            unit: share of the subsidiary's opening total assets, on top of what it has lent
+            source: ASSUMPTION
+  group_support:
+    name: Request for group support
+    actor: bank_management
+    entity: stressed
+    condition:
+      stage: recovery
+      at: own
+    default_option: last_moment
+    question: >-
+      Do you ask the rest of the group for liquidity now, or only when you cannot pay? Who
+      needs to know before the money moves, in both countries?
+    consult: ["home:competent_authority"]
+    inform: ["home:competent_authority", "host:competent_authority"]
+    options:
+      last_moment:
+        name: Only when payments cannot be funded otherwise
+        effect: none
+      early:
+        name: Ask now for what the group can lend
+        effect: early_support
+        params:
+          share:
+            value: 1.0
+            unit: share of what the other entity can lend on that day
+            source: ASSUMPTION
+
+# Coordination steps the script expects between the two countries (draft).
+# A joint decision of the college: a record kept by the control team of what the teams of
+# both countries decided together, who took part and whether they agreed. It changes nothing
+# in the model. `members`: the teams expected to take part (an assumption of the tool).
+joint_decision:
+  name: Joint decision of the college
+  members:
+    - "home:resolution_authority"
+    - "host:resolution_authority"
+    - "home:competent_authority"
+    - "host:competent_authority"
+  subjects:
+    - Choice of a resolution tool for either entity
+    - Restriction of intragroup transfers
+    - Liquidity support inside the group
+    - Communication to the public
+    - Other
+
+coordination:
+  - about: A stage change at either entity
+    step: The competent authority of the entity's country informs the competent and resolution authorities of the other country
+    by: "own:competent_authority"
+    to: "other:competent_authority, other:resolution_authority"
+  - about: Restriction of intragroup transfers
+    step: The host competent authority consults the home competent authority before restricting
+    by: "host:competent_authority"
+    to: "home:competent_authority"
+  - about: Choice of a resolution tool for either entity
+    step: The two resolution authorities meet as a college before a tool is chosen
+    by: "home:resolution_authority"
+    to: "host:resolution_authority"
+
+texts:
+  recovery: >-
+    Notification from {sender}: {entity}, in {country}, has breached a recovery indicator.
+  early_intervention: >-
+    Notification from {sender}: the conditions for early intervention at {entity}, in
+    {country}, are met.
+  likely_to_fail: >-
+    Notification from {sender}: on current trends {entity}, in {country}, is likely to fail.
+    It is still paying its obligations.
+  failure: >-
+    Notification from {sender}: {entity}, in {country}, could not pay its obligations in
+    full today.
+  foltf: >-
+    Notification from {sender}: {entity}, in {country}, has been declared failing or likely
+    to fail.
+  resolution: >-
+    Notification from {sender}: the run of {entity}, in {country}, has ended
+    ({outcome}).
+  decision_open: "A decision is now open to you: {decision_name}."
+  decision_taken: >-
+    {sender} has decided: {option_name} ({decision_name}). In effect from day {effect_day}.
+  expected_cross_border: >-
+    Assess what it means for the entity in your country and for the decisions open to you.
+    Ask the sender for the figures you are missing.
+  expected_decision: >-
+    Decide, or say that you are not deciding yet. Consult first: {consult}. Then inform:
+    {inform}.
+  expected_decision_taken: >-
+    Assess what it means for the entity in your country. Consider calling the college.
+  information_own_position: >-
+    You also see what the entity in your country has lent to, and borrowed from, the rest
+    of its group.
+  information_consolidated: >-
+    You also receive the group's consolidated liquidity buffer and deposits, {delay} older
+    than your own figures.
+  information_cross_border: >-
+    A stage change at the group's entity in the other country reaches you from that
+    country's competent authority, with the figures it passes on. You do not see that
+    entity's regular reports.

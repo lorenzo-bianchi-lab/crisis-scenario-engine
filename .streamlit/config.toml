@@ -1,0 +1,19 @@
+# Theme of the app: palette A of app/theme.py. Do not edit the colours here: change the
+# palette in app/theme.py and print this block again with `python -m app.theme`
+# (a test checks that the two agree).
+[theme]
+base = "light"
+primaryColor = "#0B6E69"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#17202A"
+borderColor = "#DAD6CC"
+font = "sans-serif"
+codeFont = "monospace"
+
+[client]
+# No Deploy button and no developer menu: the tool is shown to an audience.
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

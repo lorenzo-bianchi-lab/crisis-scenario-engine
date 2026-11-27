@@ -1,0 +1,90 @@
+# System-wide stress (SPEC_V3 phase F): two unrelated banks of one country under stress at
+# the same time, handled by the same four authorities.
+#
+# The EBA Handbook (EBA/REP/2025/20, par. 115(b)) names a system-wide issue as one kind of
+# problem to be solved: several entities affected, bank runs from direct or indirect
+# contagion, players who may have to resolve several banks at the same time. It does not say
+# how to build one. Everything below is an assumption of this tool.
+#
+# How the two banks are linked (engine/group.py, engine/system.py):
+# - they lend nothing to each other and have no claim on each other;
+# - a stage reached by one (recovery indicator, early intervention, payments default) is a
+#   panic shock for the other the next day: the contagion shocks of model.yaml, times the
+#   similarity of the two banks. The similarity is computed from model.yaml and is not set
+#   here: contagion_similarity_same_country, plus contagion_similarity_same_archetype when
+#   both banks are of the same archetype;
+# - a bank resolved before it defaults on its payments sends no "payments default" shock.
+#   Its resolution or liquidation is news too: a smaller shock for the other bank the next
+#   day (contagion_shock_resolution of model.yaml, times the similarity).
+# Both banks are under stress: the first runs the scenario chosen in the app, the second
+# the scenario named here.
+
+pairs:
+  online:
+    name: System A
+    country: Country A
+    first:
+      name: Online bank X
+      bank: digital
+    second:
+      name: Online bank Y
+      bank: digital
+    # Scenario of the bank the chosen scenario does not hit.
+    other_scenario: slow_burn
+  mixed:
+    name: System B
+    country: Country A
+    first:
+      name: Universal bank X
+      bank: universal
+    second:
+      name: Specialised lender Y
+      bank: specialised
+    other_scenario: slow_burn
+
+# News as it reaches the other bank. {entity} is the bank the news is about.
+headlines:
+  recovery: "{entity}, another bank of the country, is reported to be losing deposits fast."
+  early_intervention: "Supervisors are reported to have intervened at {entity}, another bank of the country."
+  failure: "{entity}, another bank of the country, has failed to make its payments."
+  resolution: "{entity}, another bank of the country, has been put in resolution by the authorities."
+
+# The run the app opens on for a system: the first bank is declared failing or likely to
+# fail early and bailed in (`path`, a decision path of decisions.yaml), compared with the
+# authorities acting late (`compare_path`).
+showcase:
+  pair: online
+  scenario: fast_run
+  severity: central
+  stressed: first
+  path: early_foltf
+  compare_path: act_late
+
+# A joint decision of the authorities: a record kept by the control team of what the teams
+# decided together on the two banks, who took part and whether they agreed. It changes
+# nothing in the model. `members`: the teams expected to take part.
+joint_decision:
+  name: Joint decision of the authorities
+  members:
+    - resolution_authority
+    - competent_authority
+    - central_bank
+    - deposit_guarantee_scheme
+  subjects:
+    - Which bank is dealt with first
+    - Choice of a resolution tool for either bank
+    - Use of the deposit guarantee scheme's funds for both banks
+    - Communication to the public
+    - Other
+
+# Added to each team's briefing on what it sees.
+information: >-
+  You handle two banks at the same time. Each inject says which bank it is about. Your
+  figures on each bank come at the same delay and with the same scope as for a single bank.
+
+# Steps the control team expects between the teams, for the control pack. A draft for
+# discussion in the exercise, not a statement of legal duties.
+coordination:
+  - The competent authority tells the other three authorities at once when either bank changes stage, and what it means for the other bank.
+  - The resolution authority and the deposit guarantee scheme check together what both banks would need at the same time.
+  - The four authorities agree one public message before a measure on either bank is announced.

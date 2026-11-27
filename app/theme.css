@@ -1,0 +1,151 @@
+/* Rules of the visual system (dev/SPEC_UI.md, UI-1). Colours and typefaces are the
+   variables written by app/theme.py: no colour value is set in this file. */
+
+/* --- Streamlit chrome: no Deploy button, menu, status widget or footer --- */
+[data-testid="stToolbarActions"], [data-testid="stMainMenu"], [data-testid="stAppDeployButton"],
+[data-testid="stStatusWidget"], [data-testid="stDecoration"], footer { display: none !important; }
+[data-testid="stHeader"] { background: transparent; height: 0; min-height: 0; }
+
+/* --- Page --- */
+html, body, .stApp { font-family: var(--cse-font-text); color: var(--cse-ink); }
+.stApp { background: var(--cse-paper); }
+.stMainBlockContainer { padding: 1.1rem 2.5rem 3rem; max-width: 1840px; }
+[data-testid="stSidebar"] { background: var(--cse-surface); border-right: 1px solid var(--cse-line); }
+h1 { font-size: 2rem !important; font-weight: 700 !important; padding-top: 0.2rem !important; }
+h2 { font-size: 1.45rem !important; font-weight: 700 !important; }
+h3 { font-size: 1.2rem !important; font-weight: 700 !important; }
+[data-testid="stCaptionContainer"] { color: var(--cse-muted); font-size: 0.95rem; }
+
+/* --- Header: tool and exercise name, SIMULATION label, phases as a stepper --- */
+.st-key-cse_header {
+  background: var(--cse-ink); border-radius: 10px; padding: 0.55rem 1rem; margin-bottom: 0.4rem;
+}
+.st-key-cse_header [data-testid="stHorizontalBlock"] { align-items: center; gap: 0.5rem; }
+.cse-brand { color: var(--cse-paper); line-height: 1.25; }
+.cse-brand .cse-tool { font-size: 0.8rem; letter-spacing: 0.09em; text-transform: uppercase; opacity: 0.75; }
+.cse-brand .cse-exercise { font-size: 1.15rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cse-simulation {
+  display: inline-block; float: right; padding: 0.3rem 0.8rem; border: 2px solid var(--cse-paper);
+  border-radius: 6px; color: var(--cse-paper); font-family: var(--cse-font-figures);
+  font-weight: 700; letter-spacing: 0.14em; font-size: 0.95rem; white-space: nowrap;
+}
+.st-key-cse_header a[data-testid="stPageLink-NavLink"] {
+  border-radius: 999px; padding: 0.3rem 0.9rem; justify-content: center;
+  border: 1px solid transparent; background: transparent;
+}
+.st-key-cse_header a[data-testid="stPageLink-NavLink"] p {
+  color: var(--cse-paper); font-size: 1rem; font-weight: 600; white-space: nowrap;
+  overflow: visible; text-overflow: clip;
+}
+.st-key-cse_header a[data-testid="stPageLink-NavLink"] > * { overflow: visible; }
+@media (max-width: 1500px) {
+  .st-key-cse_header a[data-testid="stPageLink-NavLink"] { padding: 0.3rem 0.5rem; }
+  .st-key-cse_header a[data-testid="stPageLink-NavLink"] p { font-size: 0.92rem; }
+  .cse-brand .cse-exercise { font-size: 1rem; }
+  .cse-simulation { font-size: 0.82rem; padding: 0.3rem 0.5rem; }
+}
+.st-key-cse_header a[data-testid="stPageLink-NavLink"]:hover { border-color: var(--cse-paper); }
+.st-key-cse_header .st-key-cse_step_current a[data-testid="stPageLink-NavLink"] {
+  background: var(--cse-paper); border-color: var(--cse-paper);
+}
+.st-key-cse_header .st-key-cse_step_current a[data-testid="stPageLink-NavLink"] p { color: var(--cse-ink); }
+.st-key-cse_header .st-key-cse_step_other a[data-testid="stPageLink-NavLink"] p,
+.st-key-cse_header .st-key-cse_step_home a[data-testid="stPageLink-NavLink"] p { font-weight: 400; opacity: 0.85; }
+
+/* --- KPI cards --- */
+[data-testid="stMetric"], .cse-card {
+  background: var(--cse-surface); border: 1px solid var(--cse-line); border-radius: 10px;
+  border-top: 4px solid var(--cse-accent); padding: 0.75rem 1rem 0.8rem;
+}
+[data-testid="stMetric"] { height: 100%; }
+[data-testid="stColumn"]:has(> div > [data-testid="stMetric"]) > div,
+[data-testid="stColumn"] [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] > [data-testid="stMetric"]:only-child) { height: 100%; }
+[data-testid="stMetricLabel"] p, .cse-card .cse-label {
+  color: var(--cse-muted); font-size: 0.82rem; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+[data-testid="stMetricValue"], .cse-card .cse-value {
+  font-family: var(--cse-font-figures); font-variant-numeric: tabular-nums; font-weight: 600;
+  font-size: 1.9rem; color: var(--cse-ink); line-height: 1.25;
+}
+/* A long label or value wraps instead of being cut short. */
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+}
+[data-testid="stMetricValue"] > div { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-testid="stMetricDelta"] { font-size: 0.95rem; color: var(--cse-muted); }
+.cse-cards { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.cse-card .cse-value.cse-text { font-family: var(--cse-font-text); font-size: 1.45rem; }
+.cse-card .cse-note { color: var(--cse-muted); font-size: 0.95rem; margin-top: 0.15rem; }
+
+/* Console headline values: text in cards. */
+[class*="st-key-cse_fact_"] {
+  background: var(--cse-surface); border: 1px solid var(--cse-line); border-radius: 10px;
+  border-top: 4px solid var(--cse-accent); padding: 0.6rem 1rem 0.9rem; gap: 0.2rem;
+}
+[class*="st-key-cse_fact_"] .cse-badge { font-size: 1.15rem; padding: 0.2rem 0.8rem; }
+[class*="st-key-cse_fact_"] h4 { font-family: var(--cse-font-figures); font-size: 1.35rem !important; }
+
+/* --- Stage badge and legend --- */
+.cse-badge {
+  display: inline-block; padding: 0.12rem 0.6rem; border-radius: 999px; font-weight: 600;
+  font-size: 0.95rem; white-space: nowrap;
+}
+.cse-legend { display: flex; flex-wrap: wrap; gap: 0.4rem 0.5rem; align-items: center;
+  color: var(--cse-muted); font-size: 0.95rem; }
+
+/* --- Controls and tables --- */
+.stButton button, .stDownloadButton button { border-radius: 8px; font-weight: 600; }
+.stButton button p, .stDownloadButton button p { white-space: nowrap; }
+[data-testid="stTabs"] [role="tab"] p { font-size: 1.05rem; font-weight: 600; }
+[data-testid="stExpander"] details { background: var(--cse-surface); border-radius: 10px; }
+[data-testid="stDataFrame"] { border: 1px solid var(--cse-line); border-radius: 10px; overflow: hidden; }
+[data-testid="stPlotlyChart"] {
+  background: var(--cse-surface); border: 1px solid var(--cse-line); border-radius: 10px;
+  overflow: hidden;
+}
+
+/* --- Control console as a cockpit: the clock and the stage are the two large cards --- */
+.st-key-cse_fact_0 h4 { font-size: 2.1rem !important; }
+.st-key-cse_fact_1 .cse-badge, .st-key-cse_fact_2 .cse-badge { font-size: 1.7rem; padding: 0.25rem 1rem; }
+[class*="st-key-cse_fact_"] { height: 100%; }
+/* A decision open to the players: a card; on its last close, in the warning colour. */
+[class*="st-key-cse_decision_"] {
+  background: var(--cse-surface); border-top: 4px solid var(--cse-accent) !important;
+  border-radius: 10px;
+}
+[class*="st-key-cse_decision_last_"] { border-top-color: var(--cse-stage-likely-to-fail) !important; }
+
+/* --- Player page: one column of reading width, centred, in large type --- */
+.st-key-cse_player { max-width: 860px; margin: 0 auto; }
+.st-key-cse_player p, .st-key-cse_player li, .st-key-cse_player td, .st-key-cse_player th { font-size: 1.15rem; line-height: 1.55; }
+.st-key-cse_player [data-testid="stCaptionContainer"] p { font-size: 1rem; }
+.st-key-cse_player table { width: 100%; }
+.st-key-cse_player td:nth-child(2) { font-family: var(--cse-font-figures); white-space: nowrap; }
+.st-key-cse_player_latest {
+  background: var(--cse-surface); border-top: 4px solid var(--cse-accent) !important; border-radius: 10px;
+}
+.st-key-cse_player [data-testid="stExpander"] summary p { font-size: 1.1rem; font-weight: 600; }
+[class*="st-key-cse_due_"] { background: var(--cse-accent-soft); border-radius: 10px; }
+.st-key-cse_player_latest h3 { font-size: 1.55rem !important; }
+@media (max-width: 1500px) { .st-key-cse_fact_0 h4 { font-size: 1.3rem !important; white-space: nowrap; } }
+
+/* --- Narrow windows (a side pane, a small laptop): the header takes two rows --- */
+@media (max-width: 1150px) {
+  .st-key-cse_header [data-testid="stHorizontalBlock"] { flex-wrap: wrap; row-gap: 0.3rem; }
+  .st-key-cse_header [data-testid="stColumn"] { flex: 1 1 auto !important; width: auto !important; min-width: 0 !important; }
+  .st-key-cse_header [data-testid="stColumn"]:first-child { flex: 1 1 100% !important; min-width: 100% !important; }
+  .st-key-cse_header a[data-testid="stPageLink-NavLink"] { padding: 0.2rem 0.45rem; }
+  .st-key-cse_header a[data-testid="stPageLink-NavLink"] p { font-size: 0.85rem; }
+  .cse-simulation { font-size: 0.75rem; padding: 0.2rem 0.4rem; letter-spacing: 0.08em; }
+}
+
+/* The demo tour's bar, under the header: set apart from the page by the accent colour. */
+.st-key-cse_tour {
+  border-left: 6px solid var(--cse-accent) !important; background: var(--cse-surface);
+}
+.st-key-cse_tour [data-testid="stButton"] button { white-space: nowrap; }
+/* Cards of the home page: the same height in a row, the action at the bottom. */
+[class*="st-key-cse_home_phase_"] { min-height: 10.5rem; }
+.st-key-cse_home_single, .st-key-cse_home_group, .st-key-cse_home_system,
+.st-key-cse_home_tour, .st-key-cse_home_played, .st-key-cse_home_reset { min-height: 10rem; }

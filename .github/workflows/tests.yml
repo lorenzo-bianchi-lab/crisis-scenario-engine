@@ -1,0 +1,24 @@
+name: tests
+
+# A fast subset on every push and pull request: the model, its sanity checks, the stored
+# fingerprint of 216 runs, the configuration and the two-bank engine. The full suite
+# (1,959 tests, with the app and the documents) runs locally: .venv/bin/pytest -q
+on:
+  push:
+  pull_request:
+
+jobs:
+  fast-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: >-
+          python -m pytest -q -p no:cacheprovider
+          tests/test_config.py tests/test_engine.py tests/test_model_identity.py
+          tests/test_phase_a.py tests/test_phase_b2.py tests/test_contagion.py
+          tests/test_group_showcase.py tests/test_phase_f_a.py tests/test_calibration.py

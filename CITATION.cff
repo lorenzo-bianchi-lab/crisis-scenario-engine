@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Crisis Scenario Engine"
+version: "1.0"
+date-released: 2026-11-27
+license: MIT
+abstract: >-
+  The day-by-day script of a bank crisis for a simulation exercise between authorities:
+  consistent numbers for a fictitious bank, what each team knows and when, the decisions due,
+  and a console to run the exercise live. Single bank, cross-border group and system-wide
+  exercises. A prototype from a university project (ESCP Business School, MiM).
+authors:
+  - family-names: Bianchi
+    given-names: Lorenzo
+    affiliation: "ESCP Business School (MiM, university project)"
+    alias: Lorenzo-bianchi-lab
+repository-code: "https://github.com/Lorenzo-bianchi-lab/crisis-scenario-engine"
+url: "https://github.com/Lorenzo-bianchi-lab/crisis-scenario-engine"
+keywords:
+  - banking
+  - financial stability
+  - crisis simulation
+  - bank resolution
+  - simulation exercise

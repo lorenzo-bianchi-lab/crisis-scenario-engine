@@ -1,0 +1,377 @@
+# Model parameters. Each one has value, unit and source.
+# low/high (optional) give the plausible range: used by the app sliders and sampled by Monte Carlo.
+# source: ASSUMPTION means there is no verifiable source yet (calibration is M5).
+
+horizon_days:
+  value: 30
+  unit: days
+  source: dev/SPEC.md section 3.2
+
+# --- Run-off: daily base rate per deposit category (before severity and panic) ---
+base_runoff_insured_retail:
+  value: 0.003
+  low: 0.001
+  high: 0.008
+  unit: share of stock per day
+  source: ASSUMPTION
+base_runoff_uninsured_retail:
+  value: 0.015
+  low: 0.008
+  high: 0.03
+  unit: share of stock per day
+  source: ASSUMPTION
+base_runoff_corporate:
+  value: 0.020
+  low: 0.01
+  high: 0.04
+  unit: share of stock per day
+  source: ASSUMPTION
+base_runoff_financial:
+  value: 0.040
+  low: 0.02
+  high: 0.08
+  unit: share of stock per day
+  source: ASSUMPTION
+
+# --- Stable core: only the flight-prone share of each category can leave ---
+# The rest stays whatever happens (transaction balances, loyal or insured customers), so a
+# run slows down as the flight-prone part is used up. Shares of the opening stock.
+# The base run-off rates above stay shares of the whole stock: the engine divides them by the
+# flight-prone share, so the first day of a run is the same with or without a stable core.
+flight_prone_share_insured_retail:
+  value: 0.20
+  unit: share of opening stock
+  source: ASSUMPTION
+  low: 0.10
+  high: 0.30
+flight_prone_share_uninsured_retail:
+  value: 0.70
+  unit: share of opening stock
+  source: ASSUMPTION
+  low: 0.50
+  high: 0.85
+flight_prone_share_corporate:
+  value: 0.85
+  unit: share of opening stock
+  source: ASSUMPTION
+  low: 0.70
+  high: 0.95
+flight_prone_share_financial:
+  value: 1.00
+  unit: share of opening stock
+  source: ASSUMPTION
+  low: 0.90
+  high: 1.00
+
+# --- Panic multiplier = 1 + (max - 1) * logistic(steepness * (x - midpoint)) ---
+# x is a fading memory of deposit losses and news shocks (see panic_decay).
+panic_max_multiplier:
+  value: 6.0
+  low: 3.0
+  high: 10.0
+  unit: multiplier
+  source: ASSUMPTION
+panic_steepness:
+  value: 25.0
+  low: 15.0
+  high: 40.0
+  unit: per unit of x
+  source: ASSUMPTION
+panic_midpoint:
+  value: 0.12
+  low: 0.06
+  high: 0.2
+  unit: share of initial deposits
+  source: ASSUMPTION
+# Share of the panic input that fades each day (0 = panic never falls).
+panic_decay:
+  value: 0.15
+  unit: share per day
+  source: ASSUMPTION
+  low: 0.05
+  high: 0.30
+# Rollover fraction of maturing wholesale funding = 1 - sensitivity * normalised panic.
+wholesale_rollover_sensitivity:
+  value: 1.5
+  low: 1.0
+  high: 3.0
+  unit: multiplier
+  source: ASSUMPTION
+
+# Upper limit on the rollover fraction: 1 = wholesale market open, 0 = closed.
+wholesale_rollover_cap:
+  value: 1.0
+  unit: share of maturing funding
+  source: ASSUMPTION
+
+# --- Calendar (SPEC_V2 phase C) ---
+# On Saturdays and Sundays: no market sales, no central bank drawing, wholesale maturities
+# move to Monday. Withdrawals continue at a reduced rate and are paid from cash only; what
+# cash cannot cover is "requested, not yet settled" and falls due on Monday.
+weekend_rules_on:
+  value: 1
+  unit: switch (1 = on, 0 = off)
+  source: "dev/SPEC_V2.md phase C"
+weekend_withdrawal_share:
+  value: 0.30
+  unit: share of a business day's withdrawal requests
+  source: ASSUMPTION
+  low: 0.10
+  high: 0.60
+# Intraday view: how a day's outflow is allocated over time blocks. An allocation of the
+# daily figure for the script and the app, not a simulation. The four shares add up to 1.
+intraday_share_morning:
+  value: 0.30
+  unit: share of the day's outflow, 09:00-12:00
+  source: ASSUMPTION
+intraday_share_midday:
+  value: 0.25
+  unit: share of the day's outflow, 12:00-15:00
+  source: ASSUMPTION
+intraday_share_afternoon:
+  value: 0.30
+  unit: share of the day's outflow, 15:00-18:00
+  source: ASSUMPTION
+intraday_share_overnight:
+  value: 0.15
+  unit: share of the day's outflow, after 18:00
+  source: ASSUMPTION
+
+# --- Payment outage: withdrawals are queued from start day to end day (0 = no outage) ---
+payment_outage_start_day:
+  value: 0
+  unit: day
+  source: ASSUMPTION
+payment_outage_end_day:
+  value: 0
+  unit: day
+  source: ASSUMPTION
+
+# --- Funding waterfall ---
+hqla_level1_haircut:
+  value: 0.01
+  low: 0.0
+  high: 0.03
+  unit: share of market value
+  source: ASSUMPTION
+hqla_level2_haircut:
+  value: 0.10
+  low: 0.05
+  high: 0.2
+  unit: share of market value
+  source: ASSUMPTION
+central_bank_haircut:
+  value: 0.25
+  low: 0.1
+  high: 0.45
+  unit: share of collateral value
+  source: ASSUMPTION
+central_bank_mobilisation_lag_days:
+  value: 2
+  low: 0
+  high: 5
+  unit: days
+  source: ASSUMPTION
+fire_sale_discount:
+  value: 0.20
+  low: 0.1
+  high: 0.4
+  unit: share of book value
+  source: ASSUMPTION
+# Sale capacity added each day from day 1; unused capacity carries over.
+fire_sale_daily_cap_share:
+  value: 0.01
+  low: 0.005
+  high: 0.02
+  unit: share of day-0 illiquid assets per day
+  source: ASSUMPTION
+
+# --- Emergency liquidity assistance (ELA) ---
+# Usable once granted (a decision, see config/decisions.yaml) and only while CET1 is at or
+# above the requirement.
+ela_haircut:
+  value: 0.50
+  unit: share
+  source: ASSUMPTION
+  low: 0.35
+  high: 0.65
+# Share of the loan book accepted as ELA collateral.
+ela_eligible_loan_share:
+  value: 0.30
+  unit: share of illiquid assets
+  source: ASSUMPTION
+  low: 0.15
+  high: 0.50
+
+# --- LCR proxy: 30-day outflow rates ---
+lcr_outflow_rate_insured_retail:
+  value: 0.05
+  unit: share of stock over 30 days
+  source: ASSUMPTION
+lcr_outflow_rate_uninsured_retail:
+  value: 0.10
+  unit: share of stock over 30 days
+  source: ASSUMPTION
+lcr_outflow_rate_corporate:
+  value: 0.40
+  unit: share of stock over 30 days
+  source: ASSUMPTION
+# 60%, not 100%: part of these deposits is operational and the real ratio nets inflows.
+# Chosen so that the calibrated universal archetype opens above 100% (docs/CALIBRATION.md).
+lcr_outflow_rate_financial:
+  value: 0.60
+  unit: share of stock over 30 days
+  source: ASSUMPTION
+lcr_outflow_rate_wholesale:
+  value: 1.00
+  unit: share of funding maturing within the horizon
+  source: ASSUMPTION
+
+# --- Triggers ---
+recovery_lcr_threshold:
+  value: 1.00
+  unit: ratio
+  source: ASSUMPTION
+recovery_deposit_loss_threshold:
+  value: 0.05
+  unit: share of initial deposits
+  source: ASSUMPTION
+early_intervention_lcr_threshold:
+  value: 0.75
+  unit: ratio
+  source: ASSUMPTION
+early_intervention_cet1_margin:
+  value: 0.015
+  unit: ratio points above the capital requirement
+  source: ASSUMPTION
+# "Likely to fail" flag: liquidity buffer covers fewer than this many days of the current
+# outflow, or the CET1 ratio is projected below the requirement over the same number of days.
+likely_to_fail_survival_days:
+  value: 3
+  unit: days
+  source: ASSUMPTION
+# --- Resolution block (SPEC_V2 phase C2). Used after a run, never during it. ---
+# Write-down of the loan book found by the valuation at FoLtF. The control team picks low,
+# central (value) or high. All three are ASSUMPTION.
+resolution_writedown_share:
+  value: 0.04
+  unit: share of the loan book at FoLtF
+  source: ASSUMPTION
+  low: 0.02
+  high: 0.08
+# Share of the loan book's value lost when the bank is wound up instead. Same three levels.
+liquidation_haircut:
+  value: 0.20
+  unit: share of the loan book at FoLtF
+  source: ASSUMPTION
+  low: 0.10
+  high: 0.35
+# Challenge injects and hostile assumptions (SPEC_V3 G5). The first two are computed after a
+# run and change none of its figures.
+# Hostile assumptions: the liquidity need at reopening is raised by this share, for a
+# negative market reaction.
+hostile_liquidity_uplift:
+  value: 0.25
+  unit: share added to the liquidity need at reopening
+  source: ASSUMPTION
+# "Interested buyer" inject: non-binding bid, as a share of the CET1 the bank holds once it is
+# back at its capital requirement after the valuation write-down.
+buyer_indicative_bid_share:
+  value: 0.5
+  unit: share of CET1 at the requirement after the write-down
+  source: ASSUMPTION
+# "Rating downgrade" inject (off by default): the only challenge inject that changes the run.
+rating_downgrade_panic_shock:
+  value: 0.10
+  unit: added to the panic input
+  source: ASSUMPTION
+# Share of the wholesale funding that would have been rolled over and is no longer renewed,
+# from the day of the downgrade on.
+rating_downgrade_rollover_cut:
+  value: 0.25
+  unit: share of rolled-over wholesale funding
+  source: ASSUMPTION
+# "Share and bond prices fall" inject (off by default): same two effects, smaller.
+market_prices_fall_panic_shock:
+  value: 0.08
+  unit: added to the panic input
+  source: ASSUMPTION
+market_prices_fall_rollover_cut:
+  value: 0.15
+  unit: share of rolled-over wholesale funding
+  source: ASSUMPTION
+
+# "Stabilised" at the end of a run: on each of the last `stabilised_days` days the flag
+# conditions do not hold, the liquidity buffer is positive and the daily outflow is below
+# `stabilised_outflow_share` of opening deposits.
+stabilised_days:
+  value: 3
+  unit: days
+  source: ASSUMPTION
+stabilised_outflow_share:
+  value: 0.002
+  unit: share of opening deposits per day
+  source: ASSUMPTION
+resolution_funding_days:
+  value: 5
+  unit: days
+  source: ASSUMPTION
+
+# --- Contagion to a second bank ---
+# Shock added to the second bank's panic input one day after the first bank reaches each
+# trigger stage, at similarity 1. The actual shock is this value x similarity.
+contagion_shock_recovery:
+  value: 0.03
+  unit: added to the panic input
+  source: ASSUMPTION
+contagion_shock_early_intervention:
+  value: 0.06
+  unit: added to the panic input
+  source: ASSUMPTION
+contagion_shock_failure:
+  value: 0.12
+  unit: added to the panic input
+  source: ASSUMPTION
+# Shock added to the other bank's panic input one day after a bank is put in resolution or
+# liquidation without having defaulted on its payments: an orderly resolution is also news.
+# Used for the two banks of a system (config/systems.yaml), times their similarity; not for
+# a cross-border group. Smaller than the shock of a payments default; 0 switches it off.
+contagion_shock_resolution:
+  value: 0.06
+  unit: added to the panic input
+  source: ASSUMPTION
+# Similarity = sum of the components that apply (0 = unrelated banks, no contagion).
+contagion_similarity_same_archetype:
+  value: 0.5
+  unit: similarity
+  source: ASSUMPTION
+contagion_similarity_same_country:
+  value: 0.5
+  unit: similarity
+  source: ASSUMPTION
+
+# --- Reverse mode (SPEC_V2 phase E) ---
+# Ranges the solver searches, besides the scenario's severity. Both are multipliers: 1 leaves
+# the configured news shocks, and the archetype's run-off speed factor, as they are.
+reverse_news_shock_scale:
+  value: 1.0
+  low: 0.5
+  high: 1.5
+  unit: multiplier of every news shock of the scenario
+  source: ASSUMPTION
+reverse_speed_factor_scale:
+  value: 1.0
+  low: 0.75
+  high: 1.25
+  unit: multiplier of the archetype's run-off speed factor
+  source: ASSUMPTION
+
+# --- Monte Carlo ---
+monte_carlo_runs:
+  value: 500
+  unit: runs
+  source: dev/SPEC.md section 3.6
+monte_carlo_seed:
+  value: 2028
+  unit: random seed
+  source: ASSUMPTION

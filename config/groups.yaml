@@ -1,0 +1,104 @@
+# Cross-border groups (SPEC_V2 phase F): a parent and a subsidiary in two countries.
+# Each entity is one of the archetypes of banks.yaml, with its own balance sheet.
+# Everything here is an assumption of the tool. Countries are fictitious labels.
+#
+# How liquidity moves inside a group (engine/group.py):
+# - an entity that cannot fund the day's payments from cash, liquid securities and central
+#   bank funding asks the other entity before it sells loans;
+# - the other entity lends cash it holds above a floor, up to a limit on what it has lent;
+# - once the host authority restricts transfers (ring-fencing), the subsidiary lends no more.
+# Two groups are shipped. In "showcase" the subsidiary is an online deposit bank that holds
+# enough cash to carry its parent through a run, so the host's ring-fencing decides the
+# parent's fate. In "large" the subsidiary is small next to its parent: its support delays
+# nothing, and it loses part of what it lent.
+showcase:
+  name: Group A
+  parent:
+    name: Group A parent bank
+    bank: retail
+    country: Country A
+  subsidiary:
+    name: Group A subsidiary
+    bank: digital
+    country: Country B
+  # Scenario of the entity that is not the one under stress.
+  calm_scenario: baseline
+  # Most an entity may have lent to the other at any time.
+  transfer_limit_share:
+    value: 0.10
+    unit: share of the lender's opening total assets
+    source: ASSUMPTION
+  # Cash the lender keeps for itself.
+  lender_cash_floor_share:
+    value: 0.02
+    unit: share of the lender's opening deposits
+    source: ASSUMPTION
+  # A stage reached by one entity is a panic shock for the other the next day: the
+  # contagion shocks of model.yaml times this factor.
+  confidence_link:
+    value: 1.0
+    unit: factor on the contagion shocks
+    source: ASSUMPTION
+  # Panic shock for the parent the day ring-fencing takes effect (it becomes known).
+  ring_fence_shock:
+    value: 0.05
+    unit: added to the panic input
+    source: ASSUMPTION
+  # Share of what an entity has lent that it writes off when the borrower defaults on
+  # its payments.
+  claim_loss_at_default:
+    value: 0.5
+    unit: share of the intragroup claim
+    source: ASSUMPTION
+  # News as it reaches the other entity. {entity} is the entity the news is about.
+  headlines:
+    recovery: "{entity}, of the same group, is reported to be losing deposits fast."
+    early_intervention: "Supervisors are reported to have intervened at {entity}, of the same group."
+    failure: "{entity}, of the same group, has failed to make its payments."
+    ring_fence: "The authority of {country} is reported to have restricted transfers from {entity} to the rest of its group."
+
+large:
+  name: Group B
+  parent:
+    name: Group B parent bank
+    bank: universal
+    country: Country A
+  subsidiary:
+    name: Group B subsidiary
+    bank: retail
+    country: Country B
+  # Scenario of the entity that is not the one under stress.
+  calm_scenario: baseline
+  # Most an entity may have lent to the other at any time.
+  transfer_limit_share:
+    value: 0.10
+    unit: share of the lender's opening total assets
+    source: ASSUMPTION
+  # Cash the lender keeps for itself.
+  lender_cash_floor_share:
+    value: 0.02
+    unit: share of the lender's opening deposits
+    source: ASSUMPTION
+  # A stage reached by one entity is a panic shock for the other the next day: the
+  # contagion shocks of model.yaml times this factor.
+  confidence_link:
+    value: 1.0
+    unit: factor on the contagion shocks
+    source: ASSUMPTION
+  # Panic shock for the parent the day ring-fencing takes effect (it becomes known).
+  ring_fence_shock:
+    value: 0.05
+    unit: added to the panic input
+    source: ASSUMPTION
+  # Share of what an entity has lent that it writes off when the borrower defaults on
+  # its payments.
+  claim_loss_at_default:
+    value: 0.5
+    unit: share of the intragroup claim
+    source: ASSUMPTION
+  # News as it reaches the other entity. {entity} is the entity the news is about.
+  headlines:
+    recovery: "{entity}, of the same group, is reported to be losing deposits fast."
+    early_intervention: "Supervisors are reported to have intervened at {entity}, of the same group."
+    failure: "{entity}, of the same group, has failed to make its payments."
+    ring_fence: "The authority of {country} is reported to have restricted transfers from {entity} to the rest of its group."

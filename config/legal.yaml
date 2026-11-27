@@ -1,0 +1,150 @@
+# Legal references, for orientation only (docs/LEGAL_REFERENCES.md).
+#
+# They tell a reader where a concept of the tool sits in EU law. They are not legal advice and
+# not a statement of any authority's duties. The tool models none of the legal conditions: it
+# only labels its concepts. This file is the only place of the tool where a reference is
+# written; nothing here may be added, extended or rephrased beyond the table of
+# docs/LEGAL_REFERENCES.md, and a concept of the tool with no row gets no reference.
+
+# On as shipped. Off: no reference appears in the app or in an exported document.
+show: true
+
+note: "References are for orientation only. The tool does not model the legal conditions."
+
+# The acts the references point to.
+acts:
+  BRRD: "Directive 2014/59/EU, as amended by Directive (EU) 2026/806 (OJ L, 20.4.2026; to be transposed by 11 May 2028, measures apply from 12 May 2028)"
+  DGSD: "Directive 2014/49/EU, as amended by Directive (EU) 2026/804"
+  Handbook: "EBA/REP/2025/20"
+
+# Status of a reference.
+statuses:
+  A: "read by the reviewer in the Official Journal text of Directive (EU) 2026/806 on 2026-11-26"
+  B: "article of the directive as known to the reviewer, not re-read on that date: to be confirmed by a practitioner before the references are shown as final"
+
+# The table: concept, reference, status. `-`: no article.
+references:
+  exercise:
+    concept: "The exercise itself: Union-wide exercises coordinated by the EBA, on the application of the BRRD, the SRMR and the DGSD in cross-border situations; EBA publishes a report of key findings"
+    reference: 'BRRD Article 128c "Crisis management simulations"'
+    status: A
+  early_intervention:
+    concept: "Early intervention measures (competent authority)"
+    reference: 'BRRD Article 27 "Early intervention measures"'
+    status: A
+  preparation_for_resolution:
+    concept: "Competent authority informs the resolution authority; preparation for resolution"
+    reference: 'BRRD Article 30a "Preparation for resolution"'
+    status: A
+  foltf_conditions:
+    concept: "Conditions for resolution; the institution is failing or likely to fail"
+    reference: "BRRD Article 32(1), point (a)"
+    status: A
+  foltf_deemed:
+    concept: "When an institution is deemed failing or likely to fail"
+    reference: "BRRD Article 32(4)"
+    status: B
+  public_interest:
+    concept: 'Public interest assessment ("no public interest, liquidation")'
+    reference: "BRRD Article 32(5)"
+    status: A
+  moratorium:
+    concept: "Moratorium (power to suspend certain obligations)"
+    reference: "BRRD Article 33a"
+    status: A
+  valuation:
+    concept: "Valuation before resolution action; provisional valuation"
+    reference: "BRRD Article 36 (provisional valuation: paragraph 9)"
+    status: "A for the article, B for the paragraph"
+  resolution_tools:
+    concept: "Resolution tools, general"
+    reference: "BRRD Article 37"
+    status: B
+  sale_of_business:
+    concept: "Sale of business tool"
+    reference: "BRRD Articles 38 and 39"
+    status: B
+  bail_in:
+    concept: "Bail-in tool"
+    reference: "BRRD Articles 43 and 44"
+    status: B
+  contribution_threshold:
+    concept: "Contribution of at least 8 % of total liabilities including own funds before the resolution financing arrangement contributes (NOT modelled: see LIMITS)"
+    reference: "BRRD Article 44(5), point (a)"
+    status: A
+  mrel:
+    concept: "MREL"
+    reference: "BRRD Articles 45 to 45m"
+    status: B
+  write_down_order:
+    concept: 'Order of write-down and conversion (the "liability stack")'
+    reference: "BRRD Article 48"
+    status: B
+  capital_instruments:
+    concept: "Write-down and conversion of capital instruments"
+    reference: "BRRD Articles 59 and 60"
+    status: B
+  no_creditor_worse_off:
+    concept: "No creditor worse off than in insolvency"
+    reference: "BRRD Article 34(1), point (g), and Articles 73 to 75"
+    status: B
+  colleges:
+    concept: "Resolution colleges (home and host authorities)"
+    reference: "BRRD Article 88"
+    status: A
+  deposit_ranking:
+    concept: "Ranking of deposits in insolvency"
+    reference: "BRRD Article 108"
+    status: A
+  dgs_in_resolution:
+    concept: "Use of deposit guarantee schemes in resolution"
+    reference: "BRRD Article 109"
+    status: A
+  coverage_level:
+    concept: "Coverage level of EUR 100 000"
+    reference: "DGSD Article 6"
+    status: B
+  repayment_period:
+    concept: "Repayment of covered deposits within seven working days"
+    reference: "DGSD Article 8"
+    status: B
+  dgs_funds:
+    concept: "Use of DGS funds"
+    reference: "DGSD Article 11"
+    status: B
+  ela:
+    concept: "Emergency liquidity assistance"
+    reference: "Not in the BRRD or DGSD: a central bank matter (national central banks; in the euro area under the Eurosystem's ELA agreement)"
+    status: "-"
+
+# Where each row is shown: the concepts of the tool it labels. A concept not listed here
+# gets no reference. Keys: decision:<decision>, option:<decision>:<option>, stage:<stage>,
+# figure:<first words of a line of the resolution summary>, document:<part of a document>.
+concepts:
+  decision:early_intervention_measures: [early_intervention]
+  decision:declare_foltf: [foltf_conditions, foltf_deemed]
+  decision:moratorium: [moratorium]
+  decision:resolution_tool: [resolution_tools]
+  option:resolution_tool:bail_in: [bail_in]
+  option:resolution_tool:sale_of_business: [sale_of_business]
+  option:resolution_tool:liquidation: [public_interest]
+  decision:ela: [ela]
+  decision:prepare_payout: [repayment_period]
+  decision:dgs_payout: [repayment_period, dgs_funds]
+  stage:early_intervention: [early_intervention, preparation_for_resolution]
+  stage:likely_to_fail: [foltf_conditions, foltf_deemed]
+  stage:foltf: [foltf_conditions, foltf_deemed]
+  figure:Valuation write-down: [valuation]
+  figure:MREL requirement: [mrel]
+  figure:Available MREL: [mrel]
+  figure:AT1 and Tier 2: [write_down_order, capital_instruments]
+  figure:Senior non-preferred: [write_down_order]
+  figure:Senior preferred: [write_down_order]
+  figure:Uncovered deposits: [write_down_order]
+  figure:Covered deposits: [coverage_level, dgs_in_resolution]
+  figure:Liquidation: [deposit_ranking]
+  figure:DGS: [dgs_funds]
+  figure:Time to pay: [repayment_period]
+  document:liability_stack: [write_down_order, capital_instruments, mrel, coverage_level]
+  document:college: [colleges]
+  document:why_exercises: [exercise]

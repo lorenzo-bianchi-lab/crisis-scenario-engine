@@ -1,0 +1,1545 @@
+"""Pydantic models for the YAML config files.
+
+Conventions:
+- Every model parameter is a `Parameter` with value, unit and source.
+- `source: ASSUMPTION` marks a parameter with no verifiable source.
+- Bank archetypes are fictitious: one unit and one source per archetype.
+- Balance-sheet equity is represented by CET1 (simplification).
+"""
+
+from __future__ import annotations
+
+from string import Formatter
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+ASSUMPTION = "ASSUMPTION"
+BALANCE_TOLERANCE = 1e-6
+
+NonNegative = Field(ge=0)
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class Parameter(StrictModel):
+    value: float
+    unit: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    # Optional range, used by the Monte Carlo milestone (M4).
+    low: Optional[float] = None
+    high: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "Parameter":
+        if (self.low is None) != (self.high is None):
+            raise ValueError("low and high must be given together")
+        if self.low is not None and not (self.low <= self.value <= self.high):
+            raise ValueError("expected low <= value <= high")
+        return self
+
+    @property
+    def is_assumption(self) -> bool:
+        return self.source.strip().upper() == ASSUMPTION
+
+
+class Assets(StrictModel):
+    cash_reserves: float = NonNegative
+    hqla_level1: float = NonNegative
+    hqla_level2: float = NonNegative
+    other_eligible_collateral: float = NonNegative
+    illiquid_assets: float = NonNegative
+
+    def total(self) -> float:
+        return (
+            self.cash_reserves
+            + self.hqla_level1
+            + self.hqla_level2
+            + self.other_eligible_collateral
+            + self.illiquid_assets
+        )
+
+
+class Deposits(StrictModel):
+    insured_retail: float = NonNegative
+    uninsured_retail: float = NonNegative
+    corporate: float = NonNegative
+    financial: float = NonNegative
+
+    def total(self) -> float:
+        return self.insured_retail + self.uninsured_retail + self.corporate + self.financial
+
+
+class WholesaleFunding(StrictModel):
+    # Amount maturing on each simulated day (key = day number, starting at 1).
+    maturing: dict[int, float] = Field(default_factory=dict)
+    beyond_horizon: float = NonNegative
+
+    @model_validator(mode="after")
+    def _check_ladder(self) -> "WholesaleFunding":
+        for day, amount in self.maturing.items():
+            if day < 1:
+                raise ValueError(f"maturity day must be >= 1, got {day}")
+            if amount < 0:
+                raise ValueError(f"negative amount maturing on day {day}")
+        return self
+
+    def total(self) -> float:
+        return sum(self.maturing.values()) + self.beyond_horizon
+
+
+class Liabilities(StrictModel):
+    deposits: Deposits
+    wholesale_funding: WholesaleFunding
+    other_liabilities: float = NonNegative
+
+    def total(self) -> float:
+        return self.deposits.total() + self.wholesale_funding.total() + self.other_liabilities
+
+
+class Capital(StrictModel):
+    cet1: float = NonNegative
+    rwa: float = Field(gt=0)
+    capital_requirement_ratio: float = Field(gt=0, lt=1)
+
+
+class ResolutionStack(StrictModel):
+    """The loss-absorbing layers above CET1 and the MREL requirement (SPEC_V2 phase C2).
+
+    AT1/T2 is part of other liabilities and senior non-preferred debt is part of the
+    wholesale funding that matures beyond the horizon. Senior preferred debt is the rest of
+    the wholesale funding; uncovered deposits are all deposits but insured retail.
+    """
+
+    at1_t2: float = NonNegative
+    senior_non_preferred: float = NonNegative
+    mrel_requirement_ratio: float = Field(gt=0, lt=1)  # share of risk-weighted assets
+
+
+# Balance sheet lines that can carry their own source (see Bank.sources).
+BANK_ITEMS = (
+    "cash_reserves",
+    "hqla_level1",
+    "hqla_level2",
+    "other_eligible_collateral",
+    "illiquid_assets",
+    "insured_retail",
+    "uninsured_retail",
+    "corporate",
+    "financial",
+    "wholesale_funding",
+    "other_liabilities",
+    "cet1",
+    "rwa",
+    "capital_requirement_ratio",
+    "at1_t2",
+    "senior_non_preferred",
+    "mrel_requirement_ratio",
+)
+
+
+class Bank(StrictModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    unit: str = Field(min_length=1)
+    # Default source of every line; `sources` overrides it line by line.
+    source: str = Field(min_length=1)
+    sources: dict[str, str] = Field(default_factory=dict)
+    assets: Assets
+    liabilities: Liabilities
+    capital: Capital
+    resolution: ResolutionStack
+    # Multiplies every deposit run-off rate of this archetype (1 = the global rates).
+    runoff_speed_factor: Parameter
+
+    def source_of(self, item: str) -> str:
+        return self.sources.get(item, self.source)
+
+    @property
+    def mrel_available(self) -> float:
+        """Own funds plus senior non-preferred debt, at the opening balance sheet."""
+        return self.capital.cet1 + self.resolution.at1_t2 + self.resolution.senior_non_preferred
+
+    @property
+    def mrel_requirement(self) -> float:
+        return self.resolution.mrel_requirement_ratio * self.capital.rwa
+
+    @model_validator(mode="after")
+    def _check_identity(self) -> "Bank":
+        unknown = set(self.sources) - set(BANK_ITEMS)
+        if unknown:
+            raise ValueError(f"sources for unknown lines: {sorted(unknown)}")
+        if any(not text.strip() for text in self.sources.values()):
+            raise ValueError("a line source must not be empty")
+        if self.runoff_speed_factor.value < 0:
+            raise ValueError("runoff_speed_factor must be >= 0")
+        if self.resolution.at1_t2 > self.liabilities.other_liabilities + BALANCE_TOLERANCE:
+            raise ValueError("resolution.at1_t2 is part of, and cannot exceed, other_liabilities")
+        beyond = self.liabilities.wholesale_funding.beyond_horizon
+        if self.resolution.senior_non_preferred > beyond + BALANCE_TOLERANCE:
+            raise ValueError(
+                "resolution.senior_non_preferred is part of, and cannot exceed, the wholesale "
+                "funding beyond the horizon"
+            )
+        gap = self.assets.total() - (self.liabilities.total() + self.capital.cet1)
+        if abs(gap) > BALANCE_TOLERANCE:
+            raise ValueError(
+                f"balance sheet does not balance: assets - (liabilities + equity) = {gap:.6f}"
+            )
+        return self
+
+
+class NewsEvent(StrictModel):
+    day: int = Field(ge=1)
+    headline: str = Field(min_length=1)
+    # Added to the panic input on that day; negative for a reassuring event.
+    panic_shock: float
+    # A loss revealed that day, as a share of the loan book: it is written off against CET1.
+    loan_loss_share: float = Field(default=0.0, ge=0, lt=1)
+    # From that day on, this share of the wholesale funding that would have been rolled over
+    # is no longer renewed (a rating downgrade, a fall in the bank's market prices).
+    rollover_cut: float = Field(default=0.0, ge=0, le=1)
+
+
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+class SeverityFade(StrictModel):
+    """The scenario's pressure eases once its trigger is over.
+
+    From `from_day` on, severity moves from its starting value towards `floor`, halving the
+    distance every `half_life_days`. A severity already at or below the floor does not move.
+    """
+
+    from_day: Parameter
+    half_life_days: Parameter
+    floor: Parameter
+
+    @model_validator(mode="after")
+    def _check(self) -> "SeverityFade":
+        if self.from_day.value < 1 or self.from_day.value != int(self.from_day.value):
+            raise ValueError("fade.from_day must be a whole number >= 1")
+        if self.half_life_days.value <= 0:
+            raise ValueError("fade.half_life_days must be > 0")
+        if self.floor.value < 0:
+            raise ValueError("fade.floor must be >= 0")
+        return self
+
+    def factor_on(self, day: int, severity: float) -> float:
+        """Severity in effect on `day`, given the scenario's starting severity."""
+        start, floor = int(self.from_day.value), self.floor.value
+        if day < start or severity <= floor:
+            return severity
+        remaining = 0.5 ** ((day - start + 1) / self.half_life_days.value)
+        return floor + (severity - floor) * remaining
+
+
+# The EBA Handbook's scenario taxonomy (EBA/REP/2025/20, par. 115): value -> label.
+TAXONOMY = {
+    "issue": {
+        "liquidity": "Liquidity",
+        "solvency": "Solvency",
+        "operational": "Operational",
+        "combination": "Combination",
+    },
+    "scope": {
+        "idiosyncratic": "Idiosyncratic",
+        "system_wide": "System-wide",
+    },
+    "speed": {
+        "slow_burning": "Slow burning",
+        "rapid_solvency": "Rapid solvency issue",
+        "fast_burning_liquidity": "Fast burning liquidity issue",
+    },
+}
+TAXONOMY_TITLES = {"issue": "Type of issue", "scope": "Systemic relevance", "speed": "Speed of events"}
+
+
+class Taxonomy(StrictModel):
+    """Where a scenario sits in the Handbook's taxonomy."""
+
+    issue: str
+    scope: str
+    speed: str
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _check(self) -> "Taxonomy":
+        for dimension, values in TAXONOMY.items():
+            if getattr(self, dimension) not in values:
+                raise ValueError(f"taxonomy.{dimension} must be one of {list(values)}")
+        return self
+
+    def label(self) -> str:
+        return ", ".join(TAXONOMY[d][getattr(self, d)].lower() for d in TAXONOMY)
+
+
+class Scenario(StrictModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    # Place in the Handbook's taxonomy; none for the calm baseline, which is not a crisis.
+    taxonomy: Optional[Taxonomy] = None
+    severity: Parameter
+    # Optional: the pressure eases after the trigger is over (none = constant severity).
+    fade: Optional[SeverityFade] = None
+    # Weekday of day 1. Used for labels in the exercise script only (no calendar rules yet).
+    start_weekday: str = "Monday"
+    # Parameter values that replace those of model.yaml for this scenario.
+    overrides: dict[str, Parameter] = Field(default_factory=dict)
+    news_events: list[NewsEvent] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_severity(self) -> "Scenario":
+        if self.severity.value < 0:
+            raise ValueError("severity must be >= 0")
+        if self.start_weekday not in WEEKDAYS:
+            raise ValueError(f"start_weekday must be one of {list(WEEKDAYS)}")
+        return self
+
+    def weekday(self, day: int) -> str:
+        """Weekday of simulated day `day` (day 1 is the start weekday; day 0 the day before)."""
+        return WEEKDAYS[(WEEKDAYS.index(self.start_weekday) + day - 1) % 7]
+
+
+# Time blocks of the intraday view: key -> label.
+INTRADAY_BLOCKS = {
+    "morning": "09:00-12:00",
+    "midday": "12:00-15:00",
+    "afternoon": "15:00-18:00",
+    "overnight": "after 18:00",
+}
+
+
+class ModelParams(StrictModel):
+    """All model parameters of config/model.yaml (spec sections 3.2-3.4)."""
+
+    horizon_days: Parameter
+
+    # Run-off: daily base rate per deposit category, before severity and panic.
+    base_runoff_insured_retail: Parameter
+    base_runoff_uninsured_retail: Parameter
+    base_runoff_corporate: Parameter
+    base_runoff_financial: Parameter
+    # Stable core: only this share of each category's opening stock can leave.
+    flight_prone_share_insured_retail: Parameter
+    flight_prone_share_uninsured_retail: Parameter
+    flight_prone_share_corporate: Parameter
+    flight_prone_share_financial: Parameter
+
+    # Panic multiplier = 1 + (max - 1) * logistic(steepness * (x - midpoint)).
+    # x is a fading memory: each day it loses the share `panic_decay`, then the day's new
+    # deposit loss share and news shocks are added. It never goes below zero.
+    panic_max_multiplier: Parameter
+    panic_steepness: Parameter
+    panic_midpoint: Parameter
+    panic_decay: Parameter
+    # Rollover fraction = 1 - sensitivity * normalised panic, clamped to [0, 1].
+    wholesale_rollover_sensitivity: Parameter
+    # Upper limit on the rollover fraction: 1 = market open, 0 = market closed.
+    wholesale_rollover_cap: Parameter
+
+    # Calendar: weekend rules on or off, and the share of a business day's withdrawal
+    # requests that still comes in on a weekend day.
+    weekend_rules_on: Parameter
+    weekend_withdrawal_share: Parameter
+    # Intraday view: allocation of a day's outflow over four time blocks.
+    intraday_share_morning: Parameter
+    intraday_share_midday: Parameter
+    intraday_share_afternoon: Parameter
+    intraday_share_overnight: Parameter
+
+    # Payment outage: withdrawals are queued from start day to end day (0 = no outage).
+    payment_outage_start_day: Parameter
+    payment_outage_end_day: Parameter
+
+    # Funding waterfall.
+    hqla_level1_haircut: Parameter
+    hqla_level2_haircut: Parameter
+    central_bank_haircut: Parameter
+    central_bank_mobilisation_lag_days: Parameter
+    fire_sale_discount: Parameter
+    fire_sale_daily_cap_share: Parameter
+    # Emergency liquidity assistance: usable once granted (a decision, config/decisions.yaml)
+    # and only while the CET1 ratio is at or above the requirement. Collateral: what is left
+    # of the eligible collateral plus a share of the loan book, at a higher haircut.
+    ela_haircut: Parameter
+    ela_eligible_loan_share: Parameter
+
+    # LCR proxy: 30-day outflow rates.
+    lcr_outflow_rate_insured_retail: Parameter
+    lcr_outflow_rate_uninsured_retail: Parameter
+    lcr_outflow_rate_corporate: Parameter
+    lcr_outflow_rate_financial: Parameter
+    lcr_outflow_rate_wholesale: Parameter
+
+    # Triggers.
+    recovery_lcr_threshold: Parameter
+    recovery_deposit_loss_threshold: Parameter
+    early_intervention_lcr_threshold: Parameter
+    early_intervention_cet1_margin: Parameter
+    # "Likely to fail" flag: survival horizon below this number of days, or CET1 ratio
+    # projected below the requirement over the same number of days.
+    likely_to_fail_survival_days: Parameter
+    # Resolution (computed after a run, never during it): the write-down of the loan book
+    # found by the valuation at FoLtF, and the value lost on it in a liquidation. Each has a
+    # low, central and high value; the control team picks one.
+    resolution_writedown_share: Parameter
+    liquidation_haircut: Parameter
+    # Challenge injects and hostile assumptions (SPEC_V3 G5). The first two are computed after
+    # a run and change no figure of it; the third is a news shock added to the scenario.
+    hostile_liquidity_uplift: Parameter
+    buyer_indicative_bid_share: Parameter
+    rating_downgrade_panic_shock: Parameter
+    rating_downgrade_rollover_cut: Parameter
+    market_prices_fall_panic_shock: Parameter
+    market_prices_fall_rollover_cut: Parameter
+    # Thresholds of the "stabilised" outcome at the end of a run.
+    stabilised_days: Parameter
+    stabilised_outflow_share: Parameter
+    resolution_funding_days: Parameter
+
+    # Contagion: panic shock received by a second bank when the first bank reaches a
+    # trigger stage, at similarity 1; and the similarity added by each shared feature.
+    contagion_shock_recovery: Parameter
+    contagion_shock_early_intervention: Parameter
+    contagion_shock_failure: Parameter
+    contagion_shock_resolution: Parameter
+    contagion_similarity_same_archetype: Parameter
+    contagion_similarity_same_country: Parameter
+
+    # Reverse mode: ranges searched by the solver, around 1 (a multiplier of the configured
+    # news shocks, and of the archetype's run-off speed factor).
+    reverse_news_shock_scale: Parameter
+    reverse_speed_factor_scale: Parameter
+
+    # Monte Carlo defaults.
+    monte_carlo_runs: Parameter
+    monte_carlo_seed: Parameter
+
+    @model_validator(mode="after")
+    def _check_values(self) -> "ModelParams":
+        for name in type(self).model_fields:
+            value = getattr(self, name).value
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
+            is_share = name.endswith(("_haircut", "_discount", "_share")) or name.startswith(
+                ("base_runoff_", "lcr_outflow_rate_", "flight_prone_share_")
+            )
+            if is_share and value > 1:
+                raise ValueError(f"{name} must be <= 1")
+            if name.endswith(("_haircut", "_discount")) and value >= 1:
+                raise ValueError(f"{name} must be < 1")
+        if self.horizon_days.value < 1 or self.horizon_days.value != int(self.horizon_days.value):
+            raise ValueError("horizon_days must be a positive whole number")
+        if self.panic_max_multiplier.value < 1:
+            raise ValueError("panic_max_multiplier must be >= 1")
+        if self.panic_decay.value > 1:
+            raise ValueError("panic_decay must be <= 1")
+        for name in ("likely_to_fail_survival_days", "stabilised_days"):
+            if getattr(self, name).value != int(getattr(self, name).value):
+                raise ValueError(f"{name} must be a whole number")
+        if self.stabilised_days.value < 1:
+            raise ValueError("stabilised_days must be >= 1")
+        for name in ("resolution_writedown_share", "liquidation_haircut"):
+            if getattr(self, name).low is None:
+                raise ValueError(f"{name} needs a low and a high value")
+        if self.weekend_rules_on.value not in (0, 1):
+            raise ValueError("weekend_rules_on must be 0 or 1")
+        intraday = sum(getattr(self, f"intraday_share_{block}").value for block in INTRADAY_BLOCKS)
+        if abs(intraday - 1.0) > 1e-9:
+            raise ValueError("the intraday shares must add up to 1")
+        for name in ("reverse_news_shock_scale", "reverse_speed_factor_scale"):
+            scale = getattr(self, name)
+            if scale.low is None or not scale.low <= scale.value <= scale.high:
+                raise ValueError(f"{name} needs a low and a high value around its value")
+        for name in ("monte_carlo_runs", "monte_carlo_seed"):
+            if getattr(self, name).value != int(getattr(self, name).value):
+                raise ValueError(f"{name} must be a whole number")
+        if self.monte_carlo_runs.value < 1:
+            raise ValueError("monte_carlo_runs must be >= 1")
+        similarity = (
+            self.contagion_similarity_same_archetype.value
+            + self.contagion_similarity_same_country.value
+        )
+        if similarity > 1:
+            raise ValueError("contagion similarity components must add up to at most 1")
+        if self.wholesale_rollover_cap.value > 1:
+            raise ValueError("wholesale_rollover_cap must be <= 1")
+        start = self.payment_outage_start_day.value
+        end = self.payment_outage_end_day.value
+        if start != int(start) or end != int(end):
+            raise ValueError("payment outage days must be whole numbers")
+        if (start == 0) != (end == 0) or end < start:
+            raise ValueError("payment outage needs 1 <= start day <= end day, or 0 and 0")
+        return self
+
+    def with_overrides(self, overrides: dict[str, Parameter]) -> "ModelParams":
+        data = {name: getattr(self, name) for name in type(self).model_fields}
+        data.update(overrides)
+        return ModelParams(**data)
+
+
+ACTORS = (
+    "competent_authority",
+    "resolution_authority",
+    "central_bank",
+    "deposit_guarantee_scheme",
+    "bank_management",
+)
+# SPEC_V3 phase G: the four authorities are the players. Bank management is a simulated
+# stakeholder, played by the control team (EBA Handbook, par. 132 and 198); the engine still
+# works out what it sees, for its role card.
+PLAYERS = ACTORS[:4]
+# Stakeholders the control team plays, each with a role card.
+ROLES = ("bank_management", "independent_valuer", "media", "finance_minister", "potential_buyers")
+CONTROL_TEAM = "control_team"  # delivers an inject without playing a role
+# The moments a role card gives a line for.
+ROLE_STAGES = {
+    "normal": "Before any stage is reached",
+    "recovery": "Recovery indicator breached",
+    "early_intervention": "Early intervention conditions met",
+    "likely_to_fail": "The bank is likely to fail",
+    "foltf": "FoLtF declared",
+    "resolution": "The tool is applied or the bank is wound up",
+}
+# Purpose of an inject (EBA Handbook, par. 128).
+PURPOSES = ("advance", "challenge", "control")
+# --------------------------------------------------------------------------- decisions
+
+# Stages a decision can wait for ("failure" is the payments default).
+DECISION_STAGES = ("recovery", "early_intervention", "likely_to_fail", "failure")
+RESOLUTION_TOOLS = ("bail_in", "sale_of_business", "liquidation")
+# Effect types implemented in the engine: name -> (required parameters, optional parameters).
+DECISION_EFFECTS = {
+    "none": ((), ()),
+    "panic_shock": (("shock",), ()),
+    "asset_sale": (("share", "discount", "settlement_days"), ()),
+    "ela": ((), ("cap_share",)),
+    "trigger": ((), ()),
+    "declare_foltf": ((), ()),
+    "moratorium": (("days",), ()),
+    "resolution_tool": ((), ()),
+    "prepare_payout": (("payout_days",), ()),
+    "dgs_payout": ((), ()),
+}
+# Daily figures that can be listed in an actor's view for the decision log.
+DECISION_FIGURES = (
+    "deposits_total",
+    "cum_deposit_loss_pct",
+    "outflow_total",
+    "queued_withdrawals",
+    "liquidity_buffer",
+    "survival_days",
+    "lcr_proxy",
+    "cet1_ratio",
+    "cet1_ratio_projected",
+    "unencumbered_collateral",
+    "central_bank_funding",
+    "ela_funding",
+    "dep_insured_retail",
+    "illiquid_assets",
+    "loss",
+)
+
+
+class DecisionCondition(StrictModel):
+    """When a decision becomes possible. Every part that is given must hold."""
+
+    stage: Optional[str] = None  # this stage, or a later one, has been reached
+    after: Optional[str] = None  # this other decision has been taken ...
+    after_option: Optional[str] = None  # ... with this option (any option if omitted)
+    min_day: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "DecisionCondition":
+        if self.stage is not None and self.stage not in DECISION_STAGES:
+            raise ValueError(f"unknown stage '{self.stage}'")
+        if self.after_option is not None and self.after is None:
+            raise ValueError("after_option needs after")
+        return self
+
+
+class DecisionOption(StrictModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    effect: str
+    params: dict[str, Parameter] = Field(default_factory=dict)
+    tool: Optional[str] = None  # for effect "resolution_tool"
+    # For effect "trigger": the other decision and option that are put into effect.
+    trigger_decision: Optional[str] = None
+    trigger_option: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "DecisionOption":
+        if self.effect not in DECISION_EFFECTS:
+            raise ValueError(f"unknown effect '{self.effect}'")
+        required, optional = DECISION_EFFECTS[self.effect]
+        missing = set(required) - set(self.params)
+        unknown = set(self.params) - set(required) - set(optional)
+        if missing or unknown:
+            raise ValueError(
+                f"effect '{self.effect}': missing parameters {sorted(missing)}, "
+                f"unknown parameters {sorted(unknown)}"
+            )
+        for name in ("share", "discount", "cap_share"):
+            if name in self.params and not 0 <= self.params[name].value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+        if "discount" in self.params and self.params["discount"].value >= 1:
+            raise ValueError("discount must be < 1")
+        for name in ("settlement_days", "days", "payout_days"):
+            if name in self.params:
+                value = self.params[name].value
+                if value < 0 or value != int(value):
+                    raise ValueError(f"{name} must be a whole number >= 0")
+        if (self.effect == "resolution_tool") != (self.tool is not None):
+            raise ValueError("tool is required for, and only for, effect 'resolution_tool'")
+        if self.tool is not None and self.tool not in RESOLUTION_TOOLS:
+            raise ValueError(f"unknown resolution tool '{self.tool}'")
+        has_trigger = self.trigger_decision is not None and self.trigger_option is not None
+        if (self.effect == "trigger") != has_trigger:
+            raise ValueError("trigger_decision and trigger_option go with effect 'trigger'")
+        return self
+
+
+class Decision(StrictModel):
+    name: str = Field(min_length=1)
+    actor: str
+    condition: DecisionCondition = Field(default_factory=DecisionCondition)
+    # The option that stands when nobody decides ("authorities act late").
+    default_option: str
+    options: dict[str, DecisionOption]
+
+    @model_validator(mode="after")
+    def _check(self) -> "Decision":
+        if self.actor not in ACTORS:
+            raise ValueError(f"unknown actor '{self.actor}'")
+        if self.default_option not in self.options:
+            raise ValueError(f"default option '{self.default_option}' is not an option")
+        if self.options[self.default_option].effect != "none":
+            raise ValueError("the default option must have effect 'none'")
+        return self
+
+
+class PathChoice(StrictModel):
+    decision: str
+    option: str
+    day: int = Field(default=0, ge=0)
+
+
+class DecisionPath(StrictModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    choices: list[PathChoice] = Field(default_factory=list)
+
+
+class FasterReporting(StrictModel):
+    """A decision option that shortens an actor's delay from the day it is in effect."""
+
+    decision: str
+    option: str
+    lag_days: int = Field(ge=0)
+
+
+class ActorInformation(StrictModel):
+    """What an actor knows, and how late (SPEC_V2 phase D).
+
+    The delay applies to figures. Stage changes, payments default, FoLtF and resolution are
+    notified the same day to every actor that is already informed.
+    """
+
+    # Who the information comes from, as it is named in the script.
+    source: str = Field(min_length=1)
+    # Figures the actor receives (its scope).
+    figures: list[str]
+    # Age of the figures in days: 0 = same day, 1 = the previous day's close.
+    lag_days: int = Field(ge=0)
+    # The actor receives nothing before this stage is reached (none = informed from the start).
+    informed_from: Optional[str] = None
+    faster: Optional[FasterReporting] = None
+    # The actor also gets the day's outflow split over time blocks (an allocation).
+    intraday: bool = False
+
+    @model_validator(mode="after")
+    def _check(self) -> "ActorInformation":
+        unknown = set(self.figures) - set(DECISION_FIGURES)
+        if unknown:
+            raise ValueError(f"unknown figures: {sorted(unknown)}")
+        if len(set(self.figures)) != len(self.figures):
+            raise ValueError("a figure is listed twice")
+        if self.informed_from is not None and self.informed_from not in DECISION_STAGES:
+            raise ValueError(f"unknown stage '{self.informed_from}'")
+        if self.faster is not None and self.faster.lag_days >= self.lag_days:
+            raise ValueError("faster reporting must shorten the delay")
+        if self.intraday and (self.lag_days != 0 or "outflow_total" not in self.figures):
+            raise ValueError("intraday needs same-day figures that include outflow_total")
+        return self
+
+
+class DecisionsConfig(StrictModel):
+    """Decision points of config/decisions.yaml (SPEC_V2 phase B)."""
+
+    # Days between taking a decision (after the close) and its effect.
+    lead_days: Parameter
+    # Days until covered depositors are paid when the payout was not prepared.
+    payout_days_unprepared: Parameter
+    # What each actor knows and how late: used for the decision log and the exercise script.
+    information: dict[str, ActorInformation]
+    decisions: dict[str, Decision]
+    default_path: str
+    paths: dict[str, DecisionPath]
+
+    @model_validator(mode="after")
+    def _check(self) -> "DecisionsConfig":
+        for name in ("lead_days", "payout_days_unprepared"):
+            value = getattr(self, name).value
+            if value < 0 or value != int(value):
+                raise ValueError(f"{name} must be a whole number >= 0")
+        if self.lead_days.value < 1:
+            raise ValueError("lead_days must be at least 1: a decision uses end-of-day figures")
+        if set(self.information) != set(ACTORS):
+            raise ValueError(f"information must list exactly {list(ACTORS)}")
+        for actor, information in self.information.items():
+            faster = information.faster
+            if faster is not None:
+                target = self.decisions.get(faster.decision)
+                if target is None or faster.option not in target.options:
+                    raise ValueError(f"information of '{actor}': unknown decision or option")
+        for key, decision in self.decisions.items():
+            condition = decision.condition
+            if condition.after is not None:
+                if condition.after not in self.decisions or condition.after == key:
+                    raise ValueError(f"decision '{key}': unknown decision in 'after'")
+                options = self.decisions[condition.after].options
+                if condition.after_option is not None and condition.after_option not in options:
+                    raise ValueError(f"decision '{key}': unknown option in 'after_option'")
+            for option in decision.options.values():
+                if option.effect != "trigger":
+                    continue
+                target = self.decisions.get(option.trigger_decision)
+                if target is None or option.trigger_option not in target.options:
+                    raise ValueError(f"decision '{key}': trigger points to an unknown option")
+                if target.options[option.trigger_option].effect == "trigger":
+                    raise ValueError(f"decision '{key}': a trigger cannot point to a trigger")
+        if self.default_path not in self.paths:
+            raise ValueError(f"unknown default path '{self.default_path}'")
+        for key, path in self.paths.items():
+            seen = set()
+            for choice in path.choices:
+                decision = self.decisions.get(choice.decision)
+                if decision is None or choice.option not in decision.options:
+                    raise ValueError(f"path '{key}': unknown decision or option {choice}")
+                if choice.decision in seen:
+                    raise ValueError(f"path '{key}': decision '{choice.decision}' appears twice")
+                seen.add(choice.decision)
+        return self
+
+
+# --------------------------------------------------------------------------- script
+
+# Kinds of inject and the placeholders their text may use. No placeholder carries a figure:
+# every number in a player's document comes from the actor's information set.
+SCRIPT_TEXTS = {
+    "opening": ("bank_name", "scenario_name"),
+    "news": ("headline",),
+    "recovery": ("bank_name", "sender"),
+    "early_intervention": ("bank_name", "sender"),
+    "likely_to_fail": ("bank_name", "sender"),
+    "failure": ("bank_name", "sender"),
+    "foltf": ("bank_name",),
+    "resolution": ("bank_name", "outcome"),
+    "decision_taken": ("decider", "decision_name", "option_name", "effect_day"),
+    "decision_due": ("decision_name",),
+    "end_open": ("bank_name", "horizon_days"),
+    "course_correction": ("decision_name", "option_name"),
+}
+# Expected response to each kind of inject, for the main events list (SPEC_V3 G4).
+SCRIPT_EXPECTED = {
+    "opening": (),
+    "news": (),
+    "stage": ("inform",),  # to the competent authority, from the bank
+    "stage_relayed": (),  # to the other authorities
+    "foltf": (),
+    "resolution": (),
+    "decision_taken": (),
+    "decision_due": ("consult", "inform"),
+    "end_open": (),
+    "course_correction": (),
+}
+# Design by objective (SPEC_V3 phase E): texts of the proposal and their placeholders.
+OBJECTIVE_TEXTS = {
+    "proposal": ("decision_name", "bank_name", "scenario_name", "day", "weekday", "timing"),
+    "outcomes": ("count", "outcomes"),
+    "one_outcome": ("outcome",),
+    "followed_by": ("later",),
+    "no_difference_dependents": ("decision_name",),
+    "trade_off": ("lowest",),
+    "ranges": ("ranges",),
+    "dominated": ("decision_name", "option_name", "bank_name", "scenario_name", "day"),
+    "no_difference": ("decision_name",),
+    "never_open": ("decision_name",),
+    "directions": (),
+}
+# "stage": the bank learns of a stage change; "stage_relay": the competent authority is told
+# by the bank; "stage_relay_others": the other authorities are told by the competent authority.
+SCRIPT_CLOCK = (
+    "opening", "news", "stage", "stage_relay", "stage_relay_others", "decision_due",
+    "decision_taken", "end",
+)
+# What an ambient inject can be anchored to.
+AMBIENT_ANCHORS = DECISION_STAGES + ("foltf",)
+
+
+def _check_delivery(what: str, role: str, expected: str) -> None:
+    if role not in ROLES + (CONTROL_TEAM,):
+        raise ValueError(f"{what}: unknown role '{role}'")
+    _check_text(expected, ())
+    if any(character.isdigit() for character in expected):
+        raise ValueError(f"{what}: the expected response must not carry figures")
+
+
+def _check_text(text: str, allowed: tuple[str, ...]) -> None:
+    for _, field, spec, conversion in Formatter().parse(text):
+        if field is None:
+            continue
+        if field not in allowed:
+            raise ValueError(f"unknown placeholder '{{{field}}}' (allowed: {list(allowed)})")
+        if spec or conversion:
+            raise ValueError(f"placeholder '{{{field}}}' must not carry a format")
+
+
+class Coordination(StrictModel):
+    """Who the deciding actor should consult before, and inform after, a decision (draft)."""
+
+    consult: list[str] = Field(default_factory=list)
+    inform: list[str] = Field(default_factory=list)
+
+
+class AmbientInject(StrictModel):
+    """Background noise for the exercise: no effect on any figure (SPEC_V2 phase C1)."""
+
+    title: str = Field(min_length=1)
+    sender: str = Field(min_length=1)
+    recipients: list[str]
+    anchor: str  # the stage, or "foltf", it is placed after
+    offset_days: int = Field(ge=0)
+    time: str
+    text: str = Field(min_length=1)
+    role: str  # who delivers it: a simulated stakeholder, or the control team itself
+    expected: str = Field(min_length=1)  # the response the control team looks for
+
+    @model_validator(mode="after")
+    def _check(self) -> "AmbientInject":
+        unknown = set(self.recipients) - set(ACTORS)
+        if unknown or not self.recipients:
+            raise ValueError(f"ambient '{self.title}': unknown or missing recipients")
+        if self.anchor not in AMBIENT_ANCHORS:
+            raise ValueError(f"ambient '{self.title}': unknown anchor '{self.anchor}'")
+        _check_text(self.text, ("bank_name",))
+        _check_delivery(f"ambient '{self.title}'", self.role, self.expected)
+        if any(character.isdigit() for character in self.text):
+            raise ValueError(f"ambient '{self.title}': the text must not carry figures")
+        return self
+
+
+# Groups of resolution figures an inject of the resolution period can carry.
+RESOLUTION_FIGURE_GROUPS = ("capital", "mrel", "losses", "liquidity")
+
+
+class ResolutionInject(StrictModel):
+    """An inject of the resolution period, between FoLtF and the tool (SPEC_V2 phase C2)."""
+
+    title: str = Field(min_length=1)
+    sender: str = Field(min_length=1)
+    recipients: list[str]
+    offset_days: int = Field(ge=0)  # days after FoLtF is in effect
+    time: str
+    text: str = Field(min_length=1)
+    figures: list[str] = Field(default_factory=list)
+    role: str
+    expected: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "ResolutionInject":
+        unknown = set(self.recipients) - set(ACTORS)
+        if unknown or not self.recipients:
+            raise ValueError(f"resolution inject '{self.title}': unknown or missing recipients")
+        if set(self.figures) - set(RESOLUTION_FIGURE_GROUPS):
+            raise ValueError(f"resolution inject '{self.title}': unknown figure group")
+        _check_text(self.text, ("bank_name", "tool"))
+        _check_delivery(f"resolution inject '{self.title}'", self.role, self.expected)
+        if any(character.isdigit() for character in self.text):
+            raise ValueError(f"resolution inject '{self.title}': the text must not carry figures")
+        return self
+
+
+# What a challenge inject does besides its text.
+# second_valuation: carries the resolution figures at the write-down level above the one the
+#   players were first given; indicative_bid: carries an assumed bid; panic_shock: is a public
+#   news event with a panic shock, added to the scenario (the only one that changes the run).
+# incomplete: the bank's notification of the anchor stage reaches the competent authority
+#   with part of its figures missing; misdirected: it reaches the listed recipient instead of
+#   the competent authority. Both change who knows what, not the figures of the run.
+CHALLENGE_EFFECTS = ("second_valuation", "indicative_bid", "panic_shock", "incomplete",
+                     "misdirected")
+
+
+class ChallengeInject(StrictModel):
+    """An inject meant to challenge the players (EBA Handbook, par. 123, 129, 192)."""
+
+    title: str = Field(min_length=1)
+    sender: str = Field(min_length=1)
+    role: str
+    recipients: list[str]
+    anchor: str
+    offset_days: int = Field(ge=0)
+    time: str
+    text: str = Field(min_length=1)
+    expected: str = Field(min_length=1)
+    default: bool = False  # part of the pack unless switched off
+    hostile: bool = False  # added when the assumptions are set to hostile
+    figures: list[str] = Field(default_factory=list)
+    effect: Optional[str] = None
+    # Public: it reaches every listed recipient, also one not yet informed about the bank.
+    public: bool = False
+
+    @model_validator(mode="after")
+    def _check(self) -> "ChallengeInject":
+        what = f"challenge '{self.title}'"
+        if self.effect in ("incomplete", "misdirected"):
+            if self.anchor not in DECISION_STAGES or self.offset_days != 0:
+                raise ValueError(f"{what}: it must be anchored to a stage, with no offset")
+            wrong = self.recipients != ["competent_authority"]
+            if self.effect == "incomplete" and wrong:
+                raise ValueError(f"{what}: the recipient is the competent authority")
+            if self.effect == "misdirected" and (
+                    len(self.recipients) != 1 or not wrong):
+                raise ValueError(f"{what}: name the one player that receives it instead")
+        unknown = set(self.recipients) - set(PLAYERS)
+        if unknown or not self.recipients:
+            raise ValueError(f"{what}: recipients must be players")
+        if self.anchor not in AMBIENT_ANCHORS:
+            raise ValueError(f"{what}: unknown anchor '{self.anchor}'")
+        if set(self.figures) - set(RESOLUTION_FIGURE_GROUPS):
+            raise ValueError(f"{what}: unknown figure group")
+        if self.effect is not None and self.effect not in CHALLENGE_EFFECTS:
+            raise ValueError(f"{what}: unknown effect '{self.effect}'")
+        if self.effect == "panic_shock" and self.anchor not in DECISION_STAGES:
+            raise ValueError(f"{what}: a panic shock must be anchored to a stage")
+        if self.effect != "panic_shock" and self.figures and self.anchor != "foltf":
+            raise ValueError(f"{what}: resolution figures need the anchor 'foltf'")
+        _check_text(self.text, ("bank_name",))
+        _check_delivery(what, self.role, self.expected)
+        if any(character.isdigit() for character in self.text):
+            raise ValueError(f"{what}: the text must not carry figures")
+        return self
+
+
+class Role(StrictModel):
+    """A stakeholder played by the control team: the text of its role card (SPEC_V3 G6)."""
+
+    name: str = Field(min_length=1)
+    knows: list[str] = Field(min_length=1)
+    wants: list[str] = Field(min_length=1)
+    lines: dict[str, str]  # what it says at each moment of ROLE_STAGES it has a line for
+
+    @model_validator(mode="after")
+    def _check(self) -> "Role":
+        if not self.lines or set(self.lines) - set(ROLE_STAGES):
+            raise ValueError(f"role '{self.name}': lines must be keyed by {list(ROLE_STAGES)}")
+        for text in [*self.knows, *self.wants, *self.lines.values()]:
+            _check_text(text, ("bank_name",))
+            if any(character.isdigit() for character in text):
+                raise ValueError(f"role '{self.name}': the texts must not carry figures")
+        return self
+
+
+# Rules of play: the three categories of the EBA Handbook, par. 155.
+RULE_CATEGORIES = {
+    "scenario": "Scenario-specific rules",
+    "play": "Simulation play rules",
+    "behaviour": "Participant behaviour",
+}
+CHARTER_PLACEHOLDERS = ("bank_name", "taxonomy", "mode", "decisions", "challenges")
+
+
+class CharterElement(StrictModel):
+    """One row of the SimEx Charter (Annex 1 of the Handbook) with a draft proposal."""
+
+    element: str = Field(min_length=1)
+    description: str = ""
+    draft: str = ""  # empty: left blank for the design team
+
+    @model_validator(mode="after")
+    def _check(self) -> "CharterElement":
+        _check_text(self.draft, CHARTER_PLACEHOLDERS)
+        return self
+
+
+class SetupConfig(StrictModel):
+    """Texts and inputs of the set-up documents (SPEC_V3 G7, G8, G10)."""
+
+    bank_alias: str = Field(min_length=1)
+    country_alias: str = Field(min_length=1)
+    console_code: str = Field(min_length=1)  # asked by the control team's pages of the app
+    sessions: Parameter
+    session_hours: Parameter
+    background: dict[str, str]
+    charter: list[CharterElement] = Field(min_length=1)
+    rules: dict[str, list[str]]
+    observer_tracks: list[str] = Field(min_length=1)
+    questionnaire_intro: str = Field(min_length=1)
+    questionnaire: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SetupConfig":
+        if self.sessions.value < 1 or self.sessions.value != int(self.sessions.value):
+            raise ValueError("setup.sessions must be a whole number >= 1")
+        if self.session_hours.value <= 0:
+            raise ValueError("setup.session_hours must be > 0")
+        if "default" not in self.background:
+            raise ValueError("setup.background needs a 'default' text")
+        if set(self.rules) != set(RULE_CATEGORIES) or not all(self.rules.values()):
+            raise ValueError(f"setup.rules must give rules for exactly {list(RULE_CATEGORIES)}")
+        texts = [*self.background.values(), *(r for rules in self.rules.values() for r in rules)]
+        for text in texts:
+            _check_text(text, ("bank_name", "country"))
+        for text in [*texts, *self.observer_tracks, *(c.draft for c in self.charter)]:
+            if any(character.isdigit() for character in text):
+                raise ValueError("setup texts must not carry figures")
+        return self
+
+
+class HumanSection(StrictModel):
+    title: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+
+
+class ReportConfig(StrictModel):
+    """Texts of the closing report (SPEC_V3 phase I)."""
+
+    intro: str = Field(min_length=1)
+    circulation: str = Field(min_length=1)
+    coordination_note: str = Field(min_length=1)
+    counterfactual_note: str = Field(min_length=1)
+    human_sections: list[HumanSection] = Field(min_length=1)
+
+
+class GlossaryEntry(StrictModel):
+    term: str = Field(min_length=1)
+    definition: str = Field(min_length=1)
+
+
+class Showcase(StrictModel):
+    """The run the app opens on and the guided demo follows."""
+
+    bank: str
+    scenario: str
+    path: str
+    compare_path: str
+
+
+class Objective(StrictModel):
+    """Something a design team may want to exercise: one decision of config/decisions.yaml
+    (SPEC_V3 phase E). `annex2` is the area of the Handbook's Annex 2 it serves, or
+    "not in Annex 2"."""
+
+    decision: str
+    label: str = Field(min_length=1)
+    annex2: str = Field(min_length=1)
+
+
+# What design by objective ranks: every outcome of a run, and the two outcomes of a bank
+# left open with the model's "likely to fail" flag still raised on the last day.
+OBJECTIVE_RANK_KEYS = (
+    "stabilised", "under_stress", "emergency_funding", "bail_in", "sale_of_business", "liquidation",
+    "under_stress_likely_to_fail", "emergency_funding_likely_to_fail", "payments_default",
+)
+
+
+class LegalReference(StrictModel):
+    concept: str = Field(min_length=1)
+    reference: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+
+
+class LegalReferences(StrictModel):
+    """config/legal.yaml: where a concept of the tool sits in EU law, for orientation only.
+    The only place of the tool where a reference is written."""
+
+    show: bool = True
+    note: str = Field(min_length=1)
+    acts: dict[str, str]
+    statuses: dict[str, str]
+    references: dict[str, LegalReference]
+    concepts: dict[str, list[str]]
+
+    @model_validator(mode="after")
+    def _check(self) -> "LegalReferences":
+        for concept, keys in self.concepts.items():
+            if not keys or set(keys) - set(self.references):
+                raise ValueError(f"legal concept '{concept}' names an unknown reference")
+        for key, row in self.references.items():
+            if row.status not in ("A", "B", "-") and not row.status.startswith("A for the article"):
+                raise ValueError(f"legal reference '{key}': unknown status '{row.status}'")
+        return self
+
+
+class ScriptConfig(StrictModel):
+    """Texts and rules of the exercise script, config/script.yaml (SPEC_V2 phase D)."""
+
+    showcase: Showcase
+    # Legal references (config/legal.yaml), loaded with the script; None: none shown.
+    legal: Optional[LegalReferences] = None
+    draft_notice: str = Field(min_length=1)
+    disclaimer: str = Field(min_length=1)
+    actors: dict[str, str]  # display names
+    clock: dict[str, str]  # time of day of each kind of inject
+    # Days a decision stays open when the no-decision path has no payments default.
+    decision_window_days: Parameter
+    texts: dict[str, str]
+    # One question per decision, put to the deciding actor.
+    questions: dict[str, str]
+    coordination: dict[str, Coordination]
+    # Optional background injects; the control team can switch them off.
+    ambient: dict[str, AmbientInject] = Field(default_factory=dict)
+    # Injects of the resolution period, in order.
+    resolution: dict[str, ResolutionInject] = Field(default_factory=dict)
+    # Expected response per kind of inject, for the main events list.
+    expected: dict[str, str]
+    # Challenge injects; the control team switches each on or off.
+    challenges: dict[str, ChallengeInject] = Field(default_factory=dict)
+    # The stakeholders the control team plays.
+    roles: dict[str, Role]
+    # Set-up documents: dossier, session plan, charter, rules of play, observers, feedback.
+    setup: SetupConfig
+    # Closing report: notes of the generated part and the sections left to people.
+    report: ReportConfig
+    # Design by objective: what can be exercised, and the texts of the proposal.
+    objectives: dict[str, Objective]
+    # Rank of each outcome as a compared line of design by objective; lower is preferred.
+    objective_outcome_rank: dict[str, int]
+    objective_rank_source: str = Field(min_length=1)
+    objective_texts: dict[str, str]
+    debrief: list[str]
+    glossary: list[GlossaryEntry]
+
+    @model_validator(mode="after")
+    def _check(self) -> "ScriptConfig":
+        if set(self.actors) != set(ACTORS):
+            raise ValueError(f"actors must be exactly {list(ACTORS)}")
+        if set(self.clock) != set(SCRIPT_CLOCK):
+            raise ValueError(f"clock must give a time for exactly {list(SCRIPT_CLOCK)}")
+        times = dict(self.clock)
+        times.update({f"ambient {key}": item.time for key, item in self.ambient.items()})
+        times.update({f"resolution {key}": item.time for key, item in self.resolution.items()})
+        times.update({f"challenge {key}": item.time for key, item in self.challenges.items()})
+        for kind, value in times.items():
+            hours, _, minutes = value.partition(":")
+            if not (hours.isdigit() and minutes.isdigit() and len(minutes) == 2
+                    and int(hours) < 24 and int(minutes) < 60):
+                raise ValueError(f"clock '{kind}' must be a time such as 08:00")
+        if set(self.texts) != set(SCRIPT_TEXTS):
+            raise ValueError(f"texts must be exactly {list(SCRIPT_TEXTS)}")
+        for kind, text in self.texts.items():
+            _check_text(text, SCRIPT_TEXTS[kind])
+        if set(self.expected) != set(SCRIPT_EXPECTED):
+            raise ValueError(f"expected must be exactly {list(SCRIPT_EXPECTED)}")
+        for kind, text in self.expected.items():
+            _check_text(text, SCRIPT_EXPECTED[kind])
+            if any(character.isdigit() for character in text):
+                raise ValueError(f"expected '{kind}' must not carry figures")
+        if set(self.roles) != set(ROLES):
+            raise ValueError(f"roles must be exactly {list(ROLES)}")
+        window = self.decision_window_days.value
+        if window < 0 or window != int(window):
+            raise ValueError("decision_window_days must be a whole number >= 0")
+        for decision, coordination in self.coordination.items():
+            unknown = (set(coordination.consult) | set(coordination.inform)) - set(ACTORS)
+            if unknown:
+                raise ValueError(f"coordination of '{decision}': unknown actors {sorted(unknown)}")
+        if not self.debrief:
+            raise ValueError("debrief needs at least one question")
+        if set(self.objective_outcome_rank) != set(OBJECTIVE_RANK_KEYS):
+            raise ValueError(f"objective_outcome_rank must rank exactly {list(OBJECTIVE_RANK_KEYS)}")
+        if min(self.objective_outcome_rank.values()) < 0:
+            raise ValueError("objective_outcome_rank: ranks must be >= 0")
+        if set(self.objective_texts) != set(OBJECTIVE_TEXTS):
+            raise ValueError(f"objective_texts must be exactly {list(OBJECTIVE_TEXTS)}")
+        for kind, text in self.objective_texts.items():
+            _check_text(text, OBJECTIVE_TEXTS[kind])
+        return self
+
+
+GROUP_HEADLINES = {
+    "recovery": ("entity",),
+    "early_intervention": ("entity",),
+    "failure": ("entity",),
+    "ring_fence": ("entity", "country"),
+}
+GROUP_ENTITIES = ("parent", "subsidiary")
+
+
+class GroupEntity(StrictModel):
+    name: str = Field(min_length=1)
+    bank: str = Field(min_length=1)  # archetype of banks.yaml
+    country: str = Field(min_length=1)
+
+
+class Group(StrictModel):
+    """A parent and a subsidiary in two countries (SPEC_V2 phase F), or, with kind
+    "system", two unrelated banks of one country (engine/system.py builds those)."""
+
+    name: str = Field(min_length=1)
+    kind: Literal["cross_border", "system"] = "cross_border"
+    parent: GroupEntity
+    subsidiary: GroupEntity
+    calm_scenario: str  # scenario of the entity that is not the one under stress
+    transfer_limit_share: Parameter
+    lender_cash_floor_share: Parameter
+    confidence_link: Parameter
+    ring_fence_shock: Parameter
+    claim_loss_at_default: Parameter
+    headlines: dict[str, str]
+
+    @model_validator(mode="after")
+    def _check(self) -> "Group":
+        if self.kind == "cross_border" and self.parent.country == self.subsidiary.country:
+            raise ValueError("parent and subsidiary must be in two countries")
+        if self.kind == "system" and self.parent.country != self.subsidiary.country:
+            raise ValueError("the two banks of a system are in one country")
+        for name in ("transfer_limit_share", "lender_cash_floor_share", "claim_loss_at_default"):
+            if not 0.0 <= getattr(self, name).value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+        if self.confidence_link.value < 0 or self.ring_fence_shock.value < 0:
+            raise ValueError("confidence_link and ring_fence_shock must be >= 0")
+        wanted = set(GROUP_HEADLINES) | ({"resolution"} if self.kind == "system" else set())
+        if set(self.headlines) != wanted:
+            raise ValueError(f"headlines must be exactly {sorted(wanted)}")
+        for kind, text in self.headlines.items():
+            _check_text(text, GROUP_HEADLINES.get(kind, ("entity",)))
+        return self
+
+    def entity(self, role: str) -> GroupEntity:
+        return getattr(self, role)
+
+
+GROUP_EFFECTS = {"none": (), "restrict": ("cap_share",), "early_support": ("share",)}
+COLLEGE_TEXTS = {
+    "recovery": ("sender", "entity", "country"),
+    "early_intervention": ("sender", "entity", "country"),
+    "likely_to_fail": ("sender", "entity", "country"),
+    "failure": ("sender", "entity", "country"),
+    "foltf": ("sender", "entity", "country"),
+    "resolution": ("sender", "entity", "country", "outcome"),
+    "decision_open": ("decision_name",),
+    "decision_taken": ("sender", "option_name", "decision_name", "effect_day"),
+    "expected_cross_border": (),
+    "expected_decision": ("consult", "inform"),
+    "expected_decision_taken": (),
+    "information_own_position": (),
+    "information_consolidated": ("delay",),
+    "information_cross_border": (),
+}
+TEAM_SIDES = ("home", "host", "own", "other")
+
+
+def _check_team(reference: str, sides: tuple[str, ...] = ("home", "host")) -> None:
+    side, _, actor = reference.partition(":")
+    if side not in sides or actor not in ACTORS:
+        raise ValueError(f"'{reference}' is not a team: expected side:actor, side in {sides}")
+
+
+class GroupCondition(StrictModel):
+    stage: str
+    at: str = "own"  # own: the deciding entity; other: the other one, as passed on
+
+    @model_validator(mode="after")
+    def _check(self) -> "GroupCondition":
+        if self.stage not in DECISION_STAGES or self.at not in ("own", "other"):
+            raise ValueError("a group condition needs a stage and at: own or other")
+        return self
+
+
+class GroupOption(StrictModel):
+    name: str = Field(min_length=1)
+    effect: str
+    params: dict[str, Parameter] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check(self) -> "GroupOption":
+        if self.effect not in GROUP_EFFECTS:
+            raise ValueError(f"unknown group effect '{self.effect}'")
+        if set(self.params) != set(GROUP_EFFECTS[self.effect]):
+            raise ValueError(f"effect '{self.effect}' takes exactly {list(GROUP_EFFECTS[self.effect])}")
+        if any(not 0.0 <= item.value <= 1.0 for item in self.params.values()):
+            raise ValueError("the parameters of a group option are shares between 0 and 1")
+        return self
+
+
+class GroupDecision(StrictModel):
+    """A decision that exists only in a cross-border group."""
+
+    name: str = Field(min_length=1)
+    actor: str
+    entity: str  # parent | subsidiary | stressed
+    condition: GroupCondition
+    default_option: str
+    question: str = Field(min_length=1)
+    consult: list[str]
+    inform: list[str]
+    options: dict[str, GroupOption]
+
+    @model_validator(mode="after")
+    def _check(self) -> "GroupDecision":
+        if self.actor not in ACTORS or self.entity not in (*GROUP_ENTITIES, "stressed"):
+            raise ValueError("a group decision needs a known actor and entity")
+        if self.default_option not in self.options:
+            raise ValueError("default_option must be one of the options")
+        if self.options[self.default_option].effect != "none":
+            raise ValueError("the default option must have no effect")
+        for reference in (*self.consult, *self.inform):
+            _check_team(reference)
+        return self
+
+
+class CollegeStep(StrictModel):
+    about: str = Field(min_length=1)
+    step: str = Field(min_length=1)
+    by: str
+    to: str
+
+    @model_validator(mode="after")
+    def _check(self) -> "CollegeStep":
+        for reference in (self.by, *(item.strip() for item in self.to.split(","))):
+            _check_team(reference, TEAM_SIDES)
+        return self
+
+
+class GroupShowcase(StrictModel):
+    """The group run the app opens on: a group, a scenario at one value of its severity, and
+    the one decision of the group that changes the outcome."""
+
+    group: str
+    scenario: str
+    severity: Literal["low", "central", "high"]
+    stressed: Literal["parent", "subsidiary"]
+    decision: str
+    option: str
+    day: int = Field(ge=0)
+
+
+class JointDecision(StrictModel):
+    """A decision the teams of both countries take together, as a record (no model effect)."""
+
+    name: str = Field(min_length=1)
+    members: list[str] = Field(min_length=2)
+    subjects: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "JointDecision":
+        for reference in self.members:
+            _check_team(reference)
+        if len(set(self.subjects)) != len(self.subjects):
+            raise ValueError("joint decision subjects must be distinct")
+        return self
+
+
+class College(StrictModel):
+    """Home and host authorities of a cross-border group, as teams (an assumption of the
+    tool: the Handbook does not define the college)."""
+
+    team_name: str
+    cross_border_delay_days: Parameter
+    consolidated_delay_days: Parameter
+    cross_border_clock: str
+    showcase: GroupShowcase
+    joint_decision: JointDecision
+    decisions: dict[str, GroupDecision]
+    coordination: list[CollegeStep]
+    texts: dict[str, str]
+
+    @model_validator(mode="after")
+    def _check(self) -> "College":
+        _check_text(self.team_name, ("actor", "country"))
+        for name in ("cross_border_delay_days", "consolidated_delay_days"):
+            value = getattr(self, name).value
+            if value < 0 or value != int(value):
+                raise ValueError(f"{name} must be a whole number >= 0")
+        if set(self.texts) != set(COLLEGE_TEXTS):
+            raise ValueError(f"college texts must be exactly {list(COLLEGE_TEXTS)}")
+        for kind, text in self.texts.items():
+            _check_text(text, COLLEGE_TEXTS[kind])
+        show = self.showcase
+        if show.decision not in self.decisions or show.option not in self.decisions[show.decision].options:
+            raise ValueError("college.showcase names an unknown decision or option")
+        return self
+
+
+SYSTEM_HEADLINES = ("recovery", "early_intervention", "failure", "resolution")
+SYSTEM_BANKS = ("first", "second")
+
+
+class SystemBank(StrictModel):
+    name: str = Field(min_length=1)
+    bank: str = Field(min_length=1)  # archetype of banks.yaml
+
+
+class SystemPair(StrictModel):
+    """Two unrelated banks of one country under stress at once (SPEC_V3 phase F)."""
+
+    name: str = Field(min_length=1)
+    country: str = Field(min_length=1)
+    first: SystemBank
+    second: SystemBank
+    other_scenario: str  # scenario of the bank the chosen scenario does not hit
+
+    @model_validator(mode="after")
+    def _check(self) -> "SystemPair":
+        if self.first.name == self.second.name:
+            raise ValueError("the two banks of a system need two names")
+        return self
+
+
+class SystemShowcase(StrictModel):
+    pair: str
+    scenario: str
+    severity: Literal["low", "central", "high"]
+    stressed: Literal["first", "second"]
+    path: str  # decision path of the bank under the chosen scenario
+    compare_path: str
+
+
+class SystemJoint(StrictModel):
+    name: str = Field(min_length=1)
+    members: list[str] = Field(min_length=2)
+    subjects: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SystemJoint":
+        if set(self.members) - set(PLAYERS) or len(set(self.members)) != len(self.members):
+            raise ValueError(f"joint decision members must be distinct players among {PLAYERS}")
+        if len(set(self.subjects)) != len(self.subjects):
+            raise ValueError("joint decision subjects must be distinct")
+        return self
+
+
+class Systems(StrictModel):
+    pairs: dict[str, SystemPair] = Field(min_length=1)
+    headlines: dict[str, str]
+    showcase: SystemShowcase
+    joint_decision: SystemJoint
+    information: str = Field(min_length=1)
+    coordination: list[str]
+
+    @model_validator(mode="after")
+    def _check(self) -> "Systems":
+        if set(self.headlines) != set(SYSTEM_HEADLINES):
+            raise ValueError(f"headlines must be exactly {list(SYSTEM_HEADLINES)}")
+        for text in self.headlines.values():
+            _check_text(text, ("entity",))
+        if self.showcase.pair not in self.pairs:
+            raise ValueError("systems.showcase names an unknown pair")
+        return self
+
+
+class AiConfig(StrictModel):
+    """Replies to player requests drafted by a general-purpose AI (SPEC_V3 phase K). Off as
+    shipped; the tool is complete without it."""
+
+    enabled: bool = False
+    provider: Literal["fixed", "anthropic"] = "fixed"
+    model: str = Field(min_length=1)
+    effort: Literal["low", "medium", "high"] = "low"
+    max_tokens: int = Field(ge=256, le=16000)
+    price_input: Parameter
+    price_output: Parameter
+    instructions: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "AiConfig":
+        _check_text(self.instructions, ("stakeholder", "bank_name"))
+        if self.price_input.value < 0 or self.price_output.value < 0:
+            raise ValueError("prices must be >= 0")
+        return self
+
+
+class Config(StrictModel):
+    banks: dict[str, Bank]
+    model: ModelParams
+    scenarios: dict[str, Scenario]
+    decisions: DecisionsConfig
+    script: ScriptConfig
+    groups: dict[str, Group] = Field(default_factory=dict)
+    college: Optional[College] = None
+    systems: Optional[Systems] = None
+    ai: Optional[AiConfig] = None
+
+    @model_validator(mode="after")
+    def _check_groups(self) -> "Config":
+        for key, group in self.groups.items():
+            for role in GROUP_ENTITIES:
+                if group.entity(role).bank not in self.banks:
+                    raise ValueError(f"group '{key}': unknown bank for the {role}")
+            if group.calm_scenario not in self.scenarios:
+                raise ValueError(f"group '{key}': unknown calm_scenario")
+        if self.model.contagion_shock_resolution.value < 0:
+            raise ValueError("contagion_shock_resolution must be >= 0")
+        if self.systems is not None:
+            for key, pair in self.systems.pairs.items():
+                if key in self.groups:
+                    raise ValueError(f"'{key}' names both a group and a system")
+                if pair.first.bank not in self.banks or pair.second.bank not in self.banks:
+                    raise ValueError(f"system '{key}': unknown bank")
+                if pair.other_scenario not in self.scenarios:
+                    raise ValueError(f"system '{key}': unknown other_scenario")
+            show = self.systems.showcase
+            if show.scenario not in self.scenarios:
+                raise ValueError("systems.showcase names an unknown scenario")
+            if not {show.path, show.compare_path} <= set(self.decisions.paths):
+                raise ValueError("systems.showcase names an unknown decision path")
+        return self
+
+    @model_validator(mode="after")
+    def _check_script(self) -> "Config":
+        decisions = set(self.decisions.decisions)
+        for name in ("questions", "coordination"):
+            if set(getattr(self.script, name)) != decisions:
+                raise ValueError(f"script.{name} must cover exactly the decisions {sorted(decisions)}")
+        for key, item in self.script.challenges.items():
+            if item.effect == "panic_shock":
+                for name in (f"{key}_panic_shock", f"{key}_rollover_cut"):
+                    if name not in ModelParams.model_fields:
+                        raise ValueError(f"challenge '{key}' needs the model parameter '{name}'")
+        for key, objective in self.script.objectives.items():
+            if objective.decision not in decisions:
+                raise ValueError(f"objective '{key}' names an unknown decision")
+        unknown = set(self.script.setup.background) - set(self.scenarios) - {"default"}
+        if unknown:
+            raise ValueError(f"script.setup.background names unknown scenarios {sorted(unknown)}")
+        showcase = self.script.showcase
+        if showcase.bank not in self.banks or showcase.scenario not in self.scenarios:
+            raise ValueError("script.showcase names an unknown bank or scenario")
+        if not {showcase.path, showcase.compare_path} <= set(self.decisions.paths):
+            raise ValueError("script.showcase names an unknown decision path")
+        show = self.college.showcase
+        if show.group not in self.groups or show.scenario not in self.scenarios:
+            raise ValueError("college.showcase names an unknown group or scenario")
+        if show.severity != "central" and getattr(self.scenarios[show.scenario].severity, show.severity) is None:
+            raise ValueError("college.showcase: the scenario has no severity range")
+        for key, coordination in self.script.coordination.items():
+            actor = self.decisions.decisions[key].actor
+            if actor in coordination.consult or actor in coordination.inform:
+                raise ValueError(f"coordination of '{key}': the deciding actor lists itself")
+        return self
+
+    @model_validator(mode="after")
+    def _check_overrides(self) -> "Config":
+        for key, scenario in self.scenarios.items():
+            unknown = set(scenario.overrides) - set(ModelParams.model_fields)
+            if unknown:
+                raise ValueError(
+                    f"scenario '{key}' overrides unknown parameters: {sorted(unknown)}"
+                )
+        return self

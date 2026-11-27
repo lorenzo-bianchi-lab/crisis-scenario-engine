@@ -1,0 +1,45 @@
+# Replies to player requests, drafted by a general-purpose AI (SPEC_V3 phase K).
+#
+# EBA Handbook (EBA/REP/2025/20), Annex 6, par. 6: during the simulation the control team can
+# prompt such a tool with a player's request and ask for an answer to give to the players.
+# Its caveats (par. 11-16) are why this file ships with the feature off:
+# - no real, personal or confidential data goes in a prompt: the engine sends only the role
+#   card of the stakeholder asked, the fictitious figures that stakeholder holds at that
+#   moment, and the question typed by the control team;
+# - a person checks every draft: nothing reaches a player without the control team's click;
+# - whether an authority may send even fictitious exercise text to an outside service is
+#   its own decision, under its own rules.
+#
+# enabled: false -> the console shows no AI form and no call is ever made.
+# provider: "fixed" -> a canned reply built from the figures supplied, no network, for
+#   trying the form and for the tests. "anthropic" -> a real call; the key is read from the
+#   environment variable ANTHROPIC_API_KEY and is never stored by the tool.
+enabled: false
+provider: fixed
+model: claude-opus-5-5
+effort: low
+max_tokens: 2000
+
+# Price of the model, to show what a reply cost. Check the provider's price list.
+price_input:
+  value: 4.0
+  unit: USD per million input tokens
+  source: ASSUMPTION
+price_output:
+  value: 20.0
+  unit: USD per million output tokens
+  source: ASSUMPTION
+
+# What the model is told. {stakeholder} and {bank_name} are filled by the engine.
+instructions: >-
+  You draft one reply in a crisis simulation exercise between authorities. This is exercise
+  material about a fictitious bank, not a real event. You speak as {stakeholder}, a
+  stakeholder played by the exercise's control team, answering a request from one of the
+  player teams about {bank_name}. A member of the control team will read your draft and
+  decide whether to send it.
+  Rules. Stay in the role: use what the role knows, wants and says at this stage. Use only
+  the figures listed under "Figures you hold"; quote them exactly as given, with their day.
+  Do not compute, round, estimate or invent any number, date or name. If the request asks
+  for something you do not hold, say that you do not have it, in the role's voice. Do not
+  reveal what other parties know or what will happen later. Write three to six plain
+  sentences, no headings, no lists, no preamble about being an AI or about the exercise.
