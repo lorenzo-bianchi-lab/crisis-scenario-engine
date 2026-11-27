@@ -1,6 +1,6 @@
 # LEGAL REFERENCES - for orientation only
 
-Supplied by the project team (reviewer), 2026-11-26. The tool reads them from `config/legal.yaml`, which holds this table and nothing more.
+Compiled by the author, 2026-11-26. The tool reads them from `config/legal.yaml`, which holds this table and nothing more.
 These references tell a reader where a concept of the tool sits in EU law. They are not legal advice and not a
 statement of any authority's duties. The tool models none of the legal conditions: it only labels its concepts.
 
@@ -9,8 +9,8 @@ Acts:
 - **DGSD**: Directive 2014/49/EU, as amended by Directive (EU) 2026/804.
 - **Handbook**: EBA/REP/2025/20.
 
-Status column: **A** = read by the reviewer in the Official Journal text of Directive (EU) 2026/806 on 2026-11-26.
-**B** = article of the directive as known to the reviewer, not re-read on that date: to be confirmed by a practitioner before the references are shown as final.
+Status column: **A** = read in the Official Journal text of Directive (EU) 2026/806 on 2026-11-26.
+**B** = article of the directive not re-read in the Official Journal text on that date: to be confirmed by a practitioner before the references are shown as final.
 
 | Concept in the tool | Reference | Status |
 |---|---|---|

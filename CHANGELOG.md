@@ -23,4 +23,4 @@ First public release. A prototype from a university project (ESCP Business Schoo
 - Replies to teams' requests drafted by a general-purpose AI model: off as shipped, prepared but not tested with a real model.
 - A home page, a demo tour, an exercise already played, a reset; runs offline.
 
-**Known limits**: see `docs/LIMITS.md`. Texts not reviewed by a practitioner; legal references partly to be confirmed; Word documents not reviewed page by page as rendered.
+**Known limits**: see `docs/LIMITS.md`. Texts not reviewed by a practitioner; legal references partly to be confirmed.

@@ -83,7 +83,7 @@ It is not a supervisory model, a stress test, an early-warning system or a forec
 - The texts of injects, role cards, rules of play and coordination steps are drafts and **have not been reviewed by a practitioner**.
 - The legal references are partly marked "to be confirmed".
 - The AI-drafted replies are **prepared, not tested with a real model**.
-- The Word documents are tested for content and structure; they have not been reviewed page by page as rendered.
+- The Word documents were opened in Word by the author and render correctly; their content and structure are also tested.
 - 1,959 automated tests run locally (`.venv/bin/pytest -q`, about 12 minutes); a fast subset runs on every push.
 
 ## The EBA Handbook

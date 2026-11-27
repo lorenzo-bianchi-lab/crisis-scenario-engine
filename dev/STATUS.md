@@ -25,7 +25,7 @@ Last completed: **v1.0 preparation: a public project** (2026-11-27). University 
 - **No code read the Handbook PDF**: there was no code path to keep working. README says where to download it.
 - Concepts with no row get no reference: recovery stage, payments default, public statement, recovery options, decisions of the group other than the college.
 - Not shown in the main events list (already 11 columns): its injects carry the reference on the inject sheets.
-- The Word documents have still not been reviewed page by page as rendered (no LibreOffice on this machine).
+- The Word documents were opened in Word by the author and render correctly (2026-11-27); no PDF conversion was run here (no LibreOffice on this machine).
 
 ## Open questions
 - From before: decisions taken after FoLtF in design by objective; wording and legal references need a practitioner's review.

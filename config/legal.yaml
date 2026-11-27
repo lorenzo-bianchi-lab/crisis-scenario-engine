@@ -19,8 +19,8 @@ acts:
 
 # Status of a reference.
 statuses:
-  A: "read by the reviewer in the Official Journal text of Directive (EU) 2026/806 on 2026-11-26"
-  B: "article of the directive as known to the reviewer, not re-read on that date: to be confirmed by a practitioner before the references are shown as final"
+  A: "read in the Official Journal text of Directive (EU) 2026/806 on 2026-11-26"
+  B: "article of the directive not re-read in the Official Journal text on that date: to be confirmed by a practitioner before the references are shown as final"
 
 # The table: concept, reference, status. `-`: no article.
 references:
